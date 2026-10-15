@@ -41,9 +41,9 @@ Dados de inscrição e presença ficam no banco. O navegador guarda apenas o nec
 
 ## Publicação e decisões institucionais
 
-O repositório existente é [Altaeir-13/NEXO-Governamental-Eventos](https://github.com/Altaeir-13/NEXO-Governamental-Eventos), com branch de produção `main`. A hospedagem prevista é **Cloudflare Pages, Functions e D1 no plano Free**, usando subdomínio `.pages.dev`. O D1 de produção `nexo-eventos` já foi criado e seu UUID consta em `wrangler.toml`. A implantação Pages e a conferência pública ainda estão em andamento; a existência do banco não comprova um deployment concluído.
+O site está publicado em **[nexo-governamental-eventos.pages.dev](https://nexo-governamental-eventos.pages.dev)**, com Cloudflare Pages, Functions e D1. O repositório é [Altaeir-13/NEXO-Governamental-Eventos](https://github.com/Altaeir-13/NEXO-Governamental-Eventos), com publicação automática comprovada após commits em `main`. O D1 de produção `nexo-eventos` contém as seis migrations. O administrador foi criado com senha privada, e login, cookies, painel e logout foram verificados no HTTPS público. Consulte o [relatório de implantação](docs/IMPLANTACAO.md) para a configuração e os limites da validação.
 
-O Worker de modelo encontrado na conta não hospeda esta aplicação completa. Antes de criar recursos, liste e reutilize os existentes. Previews automáticos devem permanecer desabilitados até receberem D1 e segredo isolados; `[env.preview]` não possui binding `DB`.
+O Worker de modelo encontrado na conta foi preservado. Reutilize o projeto Pages `nexo-governamental-eventos` para esta aplicação. Previews automáticos estão desabilitados até receberem D1 e segredo isolados; `[env.preview]` não possui binding `DB`.
 
 As inscrições começam fechadas. A organização precisa confirmar data, local, convidados, contatos, privacidade e critérios para 5 horas antes de abrir. A liberação dos certificados exige presença, elegibilidade, aprovação institucional e a data configurada de dezembro de 2026.
 

@@ -1,14 +1,15 @@
-# Validação local — 15 de outubro de 2026
+# Validação local e implantação — 15 de outubro de 2026
 
-Implementação integrada em React/TypeScript, Pages Functions e D1. Esta validação não equivale a uma implantação em produção.
+Implementação integrada em React/TypeScript, Pages Functions e D1, publicada em [nexo-governamental-eventos.pages.dev](https://nexo-governamental-eventos.pages.dev). Os testes isolados e as verificações em produção são discriminados abaixo e em [IMPLANTACAO.md](IMPLANTACAO.md).
 
 ## Evidências
 
 - `npm run build`: TypeScript e Vite concluídos. PDF e leitor de câmera carregam sob demanda; o chunk PDF grande é intencional e não entra no carregamento inicial.
 - `npx wrangler pages functions build --outdir .tmp/functions`: Worker compilado.
 - `npm run db:migrate`: seis migrations aplicadas no D1 local persistente.
-- `npm test`: suíte completa de 35 testes aprovada com as seis migrations e limites finais. Uma regressão adicional foi acrescentada após a revisão do formulário administrativo; os dois testes específicos de preservação/correção do nome passaram. A suíte atual contém 36 casos.
-- `npm run test:integration`: runner independente executado com sucesso durante a implementação.
+- `npm run typecheck`: aprovado após a correção de implantação.
+- `npm test`: 38/38 testes aprovados, incluindo dois novos casos de compatibilidade das migrations e integridade por SQL direto.
+- `npm run test:integration`: 31/31 testes aprovados no comando independente após a correção.
 - `npm audit --omit=dev --audit-level=high`: nenhum aviso de vulnerabilidade retornado na consulta.
 - HTTP local: página inicial e sitemap retornaram 200; HTMLRewriter produziu Open Graph com imagem absoluta e URLs canônicas.
 
@@ -24,10 +25,13 @@ A interface pública foi examinada em desktop e largura móvel de 390 px, inclui
 
 ## Pendências externas e institucionais
 
-- A CLI Cloudflare informou que não há sessão autenticada. Não foi criado D1 remoto, deployment ou repositório na conta do usuário.
+- GitHub, autenticação Cloudflare, D1 remoto, segredo Production, administrador e Pages estão configurados. As seis migrations e os 14 gatilhos foram conferidos no D1 remoto. O erro inicial `incomplete input` foi resolvido com sintaxe equivalente nos gatilhos das migrations ainda não aplicadas; após a aplicação bem-sucedida, elas não foram novamente modificadas.
 - Confirmar data, reserva e identificação do auditório, coordenadas exatas, contato responsável, privacidade, convidados, fotografias autorizadas, critérios da carga horária e signatários. As inscrições reais começam fechadas; convidados pendentes não são publicados e o mapa não usa um marcador sem coordenadas conferidas.
-- Executar o guia de produção e conferir HTTPS, cookies Secure, isolamento de previews, login e orçamento real de CPU do plano Free. A medição do Miniflare não comprova o limite de CPU remoto; a derivação de senha permanece segura, sem reduzir seu custo para esconder essa limitação.
+- HTTPS público: páginas, assets e evento/API responderam 200; dados administrativos sem sessão responderam 401; certificado inexistente respondeu 404 na API. Login real, dashboard, exportação vazia, CSRF, cookies e logout passaram. PBKDF2 permaneceu com 100.000 iterações; o login remoto completou em cerca de 1 segundo de tempo de parede, sem erro de CPU. Não foi medido CPU por invocação nem executado teste de carga remoto.
+- A interface publicada foi examinada pelo navegador em 390 px e 1280 px, sem rolagem horizontal. O menu móvel abriu e navegou à inscrição, que informa fechamento e não apresenta formulário. Previews automáticos estão desabilitados e sem binding D1 de produção.
 - Ensaiar câmera, foco, permissões, downloads e internet nos celulares usados pela equipe. Exportar CSV de contingência e conferir backup/restauração antes do evento.
 - PDFs utilizam chancela institucional e verificação online; não são assinaturas digitais ICP-Brasil. Retenção e backups têm procedimento operacional documentado, sem scheduler automático.
+- Backup remoto privado salvo. A cópia de estrutura sem credenciais administrativas foi restaurada em D1 local novo e isolado: um evento, 14 gatilhos e bloqueios preservados. O backup completo posterior contém hashes de credenciais e deve continuar restrito e fora do Git.
+- `npm audit --omit=dev`: zero vulnerabilidades; o audit completo mantém seis avisos exclusivos de desenvolvimento. O scan adicional Codex Security falhou ao iniciar e não produziu análise ou relatório; as evidências acima não devem ser apresentadas como resultado desse scan.
 
 Consulte `OPERACAO.md` para os comandos de instalação/publicação e `SEGURANCA.md` para rotinas de privacidade e resposta a incidentes.

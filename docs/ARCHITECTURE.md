@@ -2,6 +2,8 @@
 
 React + TypeScript + Vite, Nunito hospedada localmente, CSS responsivo e acessível. API HTTP em Cloudflare Pages Functions; banco relacional Cloudflare D1, migrations versionadas. Nenhum serviço pago obrigatório. Todos os dados operacionais passam pela API, nunca por uma simulação no navegador.
 
+A implantação usa o Pages `nexo-governamental-eventos`, branch `main`, build `npm run build` e saída `dist`. O binding `DB` aponta para o D1 `nexo-eventos`; `TOKEN_SECRET` existe somente como segredo de servidor em Production. O Wrangler é a fonte de configuração dos bindings e de `NODE_VERSION=22`. Previews automáticos estão desabilitados e o ambiente de preview não recebe o D1 de produção. Os IDs e as evidências estão em [IMPLANTACAO.md](IMPLANTACAO.md).
+
 1. Fundação: configuração, tipos compartilhados, schema e integridade no banco.
 2. Site público: identidade NEXO, dados provisórios explícitos, agenda e convidados aprovados.
 3. Inscrições: validação, transação atômica, idempotência, ingresso individual e PDF.

@@ -57,3 +57,7 @@ Falhas temporárias de conexão ou D1 devem retornar erro e manter o estado conf
 ## Verificação e limites
 
 Os testes cobrem caminhos críticos com D1 local real e dados fictícios. Isso não substitui revisão institucional, ensaio de rede/câmera, teste de restauração nem conferência da configuração da conta de produção. A liberação de uso com pessoas reais deve ocorrer após essas verificações e preenchimento dos dados ainda provisórios.
+
+Na implantação de 15/10/2026, a conta administrativa foi criada com o script existente e senha digitada privadamente pelo responsável. No HTTPS público, foram verificados login, sessão, dashboard, CSV, recusa de CSRF inválido, atributos HttpOnly/Secure/SameSite=Strict e invalidação após logout. O estado final tinha zero sessões ativas, inscrições e certificados. A emissão permanece bloqueada e as inscrições fechadas. Previews não possuem banco nem segredo de produção.
+
+`npm audit --omit=dev` não encontrou vulnerabilidades nas dependências de produção. O audit completo registrou seis avisos nas ferramentas de desenvolvimento; a avaliação específica e as limitações da tentativa de scan adicional estão no [relatório](IMPLANTACAO.md). Esses resultados não representam uma garantia de ausência de vulnerabilidades.
