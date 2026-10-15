@@ -2,7 +2,7 @@
 
 Registro de pesquisa e operação editorial em 15/10/2026. A atualização visual não confirma reservas, currículos, convites ou temas de palestra. Inscrições fechadas e certificados bloqueados continuam sendo decisões independentes da publicação de conteúdo.
 
-**Estado confirmado pelo responsável nesta atualização:** não há novas autorizações de fotografias, confirmações de participantes ou aprovações de biografias e temas para publicar. Todas as pendências abaixo permanecem abertas. Os componentes preparados serão publicados com os estados institucionais de espera; imagens e textos não aprovados continuam fora dos cards públicos.
+**Estado confirmado pelo responsável nesta atualização:** não há novas autorizações de fotografias dos convidados, confirmações de participantes ou aprovações de biografias e temas para publicar. Essas pendências permanecem abertas; imagens e textos não aprovados continuam fora dos cards públicos. Em solicitação posterior, o responsável pediu uma vista real da fachada da UNDB no Google Maps; a solução de incorporação permitida está documentada abaixo.
 
 ## Local e autorização das fotografias
 
@@ -21,7 +21,17 @@ Inventário das imagens vinculadas pela galeria, para a organização solicitar 
 
 Os [termos institucionais, seção 11](https://undb.edu.br/privacidade/), reservam os direitos sobre o conteúdo e condicionam sua reprodução à autorização correspondente. Não foi encontrada licença aberta ou autorização específica para o NEXO. Nenhuma dessas imagens foi incorporada ao projeto ou configurada como hotlink. Dimensões dos arquivos não foram aferidas; devem ser conferidas quando a instituição fornecer o original autorizado.
 
-O material local fornecido contém referências a imagens omitidas, mas não inclui os arquivos fotográficos. Não há fotografia autorizada da UNDB ou dos convidados identificada nos assets iniciais do repositório. O componente permanece preparado e utiliza uma apresentação institucional sem fotografia enquanto essa pendência existir.
+O material local fornecido contém referências a imagens omitidas, mas não inclui os arquivos fotográficos. Não há fotografia autorizada da UNDB ou dos convidados identificada nos assets iniciais do repositório. Os retratos continuam utilizando as iniciais quando não há fotografia autorizada; para o local, foi selecionada a incorporação da fachada descrita a seguir.
+
+### Fachada do Campus Renascença no Google Street View
+
+Foi conferida visualmente uma vista frontal real do Campus Renascença, na Avenida Colares Moreira, com o prédio, a entrada e o letreiro da UNDB. O panorama é do **Google Street View**, capturado em **maio de 2024**, identificador `Mj9YDbgGbRwesZXMiawFmA`. Essa data é informada no crédito; não se apresenta o registro como fotografia produzida em 2026.
+
+As [diretrizes oficiais do Google, seção Street View / Web and apps](https://about.google/brand-resource-center/products-and-services/geo-guidelines/) permitem incorporar imagens e panoramas no site sem pedido individual de autorização, desde que preservados os créditos e as condições de uso. Elas proíbem extrair a imagem ou usar captura de tela como arquivo separado. O fato de uma fotografia estar publicamente acessível não foi tratado como licença genérica de reprodução.
+
+A URL foi obtida no próprio Maps por **Menu do panorama → Compartilhar ou incorporar imagem → Incorporar um mapa**. O site carrega esse iframe oficial, sem API key, faturamento ou serviço de armazenamento. Nenhuma imagem foi extraída, baixada ou versionada a partir do Street View. O carregamento é adiado (`lazy`), tem dimensão reservada, título acessível e crédito abaixo da vista, além das atribuições exibidas pelo próprio Google. O link de origem abre o enquadramento no Maps.
+
+Esse recurso depende da disponibilidade do Google e da conexão do visitante. O administrador pode substituí-lo futuramente por um arquivo autorizado hospedado no projeto. A incorporação da fachada não confirma a reserva da UNDB nem o auditório. O endereço institucional configurado e os botões de navegação foram preservados; o número estimado automaticamente pelo Street View para a posição da câmera não substitui o endereço do evento.
 
 O nome específico do auditório só deve ser publicado após a organização aprovar a reserva e marcar a confirmação do local. Até lá, a apresentação informa que o encontro e o auditório são previstos. Google Maps, Waze e “Como chegar” usam o endereço cadastrado. Não estime coordenadas; o mapa com marcador depende de localização conferida.
 
@@ -63,6 +73,10 @@ O painel configura imagens já hospedadas; não faz upload do arquivo. Não é n
 Em **Evento → Ponto de Encontro**, altere instituição (`venue`), auditório (`auditorium`), endereço (`address`) e descrição (`venue_description`). Informe caminho da foto (`venue_photo_url`), descrição acessível (`venue_photo_alt`), crédito (`venue_photo_credit`) e página de origem (`venue_photo_source_url`), quando disponível.
 
 Marque `venue_photo_authorized` somente quando houver autorização para aquela fotografia. Crédito e link de origem não substituem permissão. A descrição acessível deve explicar o que aparece na imagem sem afirmar que o espaço está reservado. A confirmação do local (`venue_confirmed`) é separada da autorização da foto. Salve e confira a página pública e os três botões de navegação.
+
+Para trocar uma incorporação do Google Maps, selecione o panorama correto, ajuste a vista e abra **Compartilhar ou incorporar imagem → Incorporar um mapa**. Copie apenas a URL entre aspas do atributo `src` para **Fotografia do local ou incorporação do Google Maps**; não cole o HTML completo. É aceito exclusivamente `https://www.google.com/maps/embed?pb=...`, sem chave de API, credenciais ou parâmetros adicionais. Confira a prévia, preencha descrição acessível, crédito e origem e registre que o uso atende às condições do serviço. Uma alteração de URL desmarca a autorização até nova conferência. A incorporação é exclusiva do local; fotografias de convidados continuam sendo arquivos de imagem.
+
+Esta atualização reaproveita `venue_photo_url` e os campos de crédito existentes, sem migration adicional. Foi realizado backup privado do D1 antes da configuração remota (`backups/antes-fachada-20261015.sql`).
 
 ## Editar e publicar convidados
 

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ApiError } from './security';
+import { getGoogleMapsEmbedUrl, isGoogleMapsEmbedAddress } from '../../shared/media';
 
 const text=(max=500)=>z.string().trim().max(max).regex(/^[^\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]*$/,'Caracteres de controle não são permitidos.');
 const bit=z.union([z.literal(0),z.literal(1)]);
@@ -16,8 +17,9 @@ export const httpsUrlSchema=z.string().max(1500).refine(value=>{
 export const imageUrlSchema=z.string().max(1500).refine(value=>{
  if(!value) return true;
  if(value.startsWith('/images/')) return /^\/images\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+\.(?:avif|webp|jpe?g|png|gif)$/i.test(value);
- return httpsUrlSchema.safeParse(value).success;
+ return !isGoogleMapsEmbedAddress(value) && httpsUrlSchema.safeParse(value).success;
 },'Use um arquivo em /images/ (WebP, AVIF, JPG, PNG ou GIF) ou uma URL HTTPS válida.');
+export const venueVisualUrlSchema=z.string().max(1500).refine(value=>!!getGoogleMapsEmbedUrl(value) || imageUrlSchema.safeParse(value).success,'Use uma imagem em /images/, uma URL HTTPS de fotografia ou o link de incorporação oficial do Google Maps (somente o src, com pb).');
 const url=httpsUrlSchema;
 export const wordCount=(value:string)=>value.trim().split(/\s+/).filter(Boolean).length;
 export const email=z.string().trim().toLowerCase().max(254).email('Informe um e-mail válido.');
@@ -27,7 +29,7 @@ export const eventSchema=z.object({
  capacity:z.number().int().min(1).max(100000),registration_open:bit,registration_starts:datetime.nullable(),registration_ends:datetime.nullable(),
  certificate_hours:z.number().positive().max(1000),certificates_released:bit,certificate_available_at:datetime,certificate_rules_approved:bit,certificate_text:text(6000).min(20),signatories:text(1000),
  contact_email:z.union([z.literal(''),email]),contact_url:url,instagram_url:url,
- venue_description:text(6000),venue_photo_url:imageUrlSchema,venue_photo_authorized:bit,venue_photo_alt:text(300),venue_photo_credit:text(300),venue_photo_source_url:url,
+ venue_description:text(6000),venue_photo_url:venueVisualUrlSchema,venue_photo_authorized:bit,venue_photo_alt:text(300),venue_photo_credit:text(300),venue_photo_source_url:url,
  privacy_text:text(10000).min(50),retention_days:z.number().int().min(30).max(3650)
 });
 export const registerSchema=z.object({eventId:text(100).min(1),name:text(150).min(5).refine(v=>v.split(/\s+/).length>=2,'Informe seu nome completo.'),email,institution:text(200).optional().default(''),course:text(200).optional().default(''),consent:z.literal(true),website:z.string().max(300).optional().default(''),idempotencyKey:z.string().regex(/^[a-zA-Z0-9_-]{20,128}$/)});

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { EventSettings, Participant, Speaker, Ticket } from '../../shared/types';
 import { ApiError, authenticate, body, equal, id, keyed, now, originCheck, randomToken, rateLimit, sessionCookie, sha, verifyPassword, type Auth, type Env } from './security';
-import { email, eventSchema, httpsUrlSchema, imageUrlSchema, parse, participantSchema, registerSchema, scheduleSchema, speakerSchema, wordCount } from './validation';
+import { email, eventSchema, httpsUrlSchema, imageUrlSchema, parse, participantSchema, registerSchema, scheduleSchema, speakerSchema, venueVisualUrlSchema, wordCount } from './validation';
 import type { CertificateSnapshot } from '../../shared/pdf';
 
 const json=(data:unknown,status=200,headers:Record<string,string>={})=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer',...headers}});
@@ -14,7 +14,7 @@ async function getEvent(env:Env,eventId:string):Promise<EventSettings & {active_
 function publicEvent(event:EventSettings & {active_count?:number}) {
  const {active_count:_,...safe}=event;
  if(!safe.venue_confirmed) safe.auditorium='';
- if(!safe.venue_photo_authorized || !safe.venue_photo_url || !imageUrlSchema.safeParse(safe.venue_photo_url).success) {
+ if(!safe.venue_photo_authorized || !safe.venue_photo_url || !venueVisualUrlSchema.safeParse(safe.venue_photo_url).success) {
   safe.venue_photo_url='';safe.venue_photo_alt='';safe.venue_photo_credit='';safe.venue_photo_source_url='';
  } else if(!httpsUrlSchema.safeParse(safe.venue_photo_source_url).success) safe.venue_photo_source_url='';
  return safe;

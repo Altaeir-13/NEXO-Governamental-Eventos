@@ -206,7 +206,24 @@ describe.sequential('plataforma integrada com D1 isolado', () => {
     expect((await request(endpoint, 'PUT', { venue_photo_authorized: 1 }, admin)).status).toBe(200);
     expect((await request(endpoint, 'PUT', { venue_photo_url: '/images/local/outro-ficticio.webp' }, admin)).status).toBe(200);
     expect((await (await request('/event')).json() as PublicEvent).event).toMatchObject(redacted);
-  });
+
+    // The real Maps-generated URL is stored as opaque data; this test never
+    // contacts Google or renders/downloads the panorama.
+    const embed = 'https://www.google.com/maps/embed?pb=!4v1792083239671!6m8!1m7!1sMj9YDbgGbRwesZXMiawFmA!2m2!1d-2.500292460392764!2d-44.28677009291693!3f1.6742678223436656!4f0!5f0.7820865974627469';
+    const visual = {
+      venue_photo_url: embed, venue_photo_authorized: 1,
+      venue_photo_alt: 'Fachada da UNDB — Campus Renascença, vista do Google Street View.',
+      venue_photo_credit: 'Google Street View · maio de 2024', venue_photo_source_url: 'https://www.google.com/maps/',
+    };
+    const embedSaved = await request(endpoint, 'PUT', visual, admin);
+    expect(embedSaved.status, await embedSaved.clone().text()).toBe(200);
+    expect((await (await request('/event')).json() as PublicEvent).event).toMatchObject({ ...visual, registration_open: 0, certificates_released: 0 });
+    const updatedTicket = await (await request('/ticket', 'POST', { token: registration.token })).json() as Ticket;
+    expect(updatedTicket).toMatchObject({ id: registration.id, code: registration.code, event: visual });
+    expect((await request(endpoint, 'PUT', { venue_photo_authorized: 0 }, admin)).status).toBe(200);
+    expect((await (await request('/event')).json() as PublicEvent).event).toMatchObject(redacted);
+    expect((await (await request('/ticket', 'POST', { token: registration.token })).json() as Ticket).event).toMatchObject(redacted);
+  }, 15_000);
 
   it('registra, normaliza o e-mail e mantém um ingresso individual persistido', async () => {
     const registration = await register({ email: '  Pessoa@EXAMPLE.INVALID  ' });

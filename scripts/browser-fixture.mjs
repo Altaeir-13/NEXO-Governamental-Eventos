@@ -45,6 +45,7 @@ await db.prepare(`UPDATE events SET slug='ensaio-tecnico-nexo',title='Ensaio té
  contact_url='',instagram_url='',venue_photo_url='',venue_photo_authorized=0`).run();
 if (editorialQa) {
   await db.prepare(`UPDATE events SET registration_open=0,certificates_released=0,certificate_rules_approved=0,
+   certificate_available_at='2026-12-01T03:00:00.000Z',
    venue_confirmed=0,latitude=0,longitude=0,venue_photo_url='/images/qa-editorial.png',venue_photo_authorized=1,
    venue_photo_alt='Padrão geométrico sintético para ensaio de imagem; não representa uma instituição real',
    venue_photo_credit='Imagem sintética exclusiva do ensaio técnico',venue_photo_source_url='',

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ArrowUpRight, BookOpen, Check, Clock3, MapPin, Navigation, Users } from 'lucide-react';
 import type { EventSettings, Speaker } from '../shared/types';
+import { getGoogleMapsEmbedUrl } from '../shared/media';
 import './editorial.css';
 
 function EditorialImage({ src, alt, children, className, onFailure }: { src: string; alt: string; children: React.ReactNode; className: string; onFailure?: () => void }) {
@@ -55,6 +56,7 @@ export function VenueSection({ event: e }: { event: EventSettings }) {
   const [failedPhoto, setFailedPhoto] = useState('');
   const address = encodeURIComponent(`${e.venue}, ${e.address}`);
   const photo = e.venue_photo_authorized && e.venue_photo_url !== failedPhoto ? e.venue_photo_url : '';
+  const streetView = getGoogleMapsEmbedUrl(photo);
   const hasCoordinates = Number.isFinite(e.latitude) && Number.isFinite(e.longitude) && (e.latitude !== 0 || e.longitude !== 0);
   return <section id="local" className="section container" aria-labelledby="venue-title">
     <div className="section-label"><span>05 / NOSSO PONTO DE ENCONTRO</span><MapPin size={19} aria-hidden="true" /></div>
@@ -62,10 +64,10 @@ export function VenueSection({ event: e }: { event: EventSettings }) {
     <p className="section-lead editorial-venue-lead">Um espaço para diálogos que transformam perspectivas.</p>
     <div className="editorial-venue">
       <figure className="editorial-venue-figure">
-        <EditorialImage key={photo} className="editorial-venue-image" src={photo} alt={e.venue_photo_alt || `Espaço de encontro em ${e.venue}`} onFailure={() => setFailedPhoto(e.venue_photo_url)}>
+        {streetView ? <div className="editorial-venue-image editorial-street-view"><iframe title={e.venue_photo_alt || `Vista da fachada de ${e.venue} no Google Street View`} src={streetView} width={960} height={720} loading="lazy" allowFullScreen referrerPolicy="strict-origin-when-cross-origin" /></div> : <EditorialImage key={photo} className="editorial-venue-image" src={photo} alt={e.venue_photo_alt || `Espaço de encontro em ${e.venue}`} onFailure={() => setFailedPhoto(e.venue_photo_url)}>
           <div className="editorial-venue-placeholder"><MapPin size={44} strokeWidth={1.2} aria-hidden="true" /><span className="editorial-caption">CONHECIMENTO QUE CONECTA</span><p>Um lugar para<br />novas perspectivas.</p><span>{e.city}</span><span className="editorial-placeholder-lines" aria-hidden="true" /></div>
-        </EditorialImage>
-        <figcaption>{photo && e.venue_photo_credit ? <>Foto: {e.venue_photo_credit}</> : <>Encontro presencial · {e.city}</>}{photo && e.venue_photo_source_url && <a href={e.venue_photo_source_url} target="_blank" rel="noreferrer">Fonte da fotografia <ArrowUpRight size={13} aria-hidden="true" /></a>}</figcaption>
+        </EditorialImage>}
+        <figcaption>{photo && e.venue_photo_credit ? <>{streetView ? '' : 'Foto: '}{e.venue_photo_credit}</> : <>Encontro presencial · {e.city}</>}{photo && e.venue_photo_source_url && <a href={e.venue_photo_source_url} target="_blank" rel="noreferrer">{streetView ? 'Ver fachada no Google Maps' : 'Fonte da fotografia'} <ArrowUpRight size={13} aria-hidden="true" /></a>}</figcaption>
       </figure>
       <div className="editorial-venue-info">
         <span className="outline-label">{e.venue_confirmed ? 'LOCAL CONFIRMADO' : 'LOCAL PREVISTO'}</span>

@@ -49,4 +49,16 @@ describe('apresentação editorial pública', () => {
     expect(html).toContain('Foto fictícia para testes');
     expect(html).not.toContain('<iframe');
   });
+  it('incorpora a vista do Google somente quando autorizada, mantendo título e fonte', () => {
+    const visual = { ...venue, venue_photo_url: 'https://www.google.com/maps/embed?pb=!4v123!6m8!1m7!1sensaio', venue_photo_source_url: 'https://www.google.com/maps/', venue_photo_credit: 'Panorama de ensaio · Google Street View' };
+    const hidden = renderToStaticMarkup(<VenueSection event={visual} />);
+    expect(hidden).not.toContain('<iframe');
+    const html = renderToStaticMarkup(<VenueSection event={{ ...visual, venue_photo_authorized: 1 }} />);
+    expect(html).toContain('<iframe title="Foto fictícia para testes"');
+    expect(html).toContain('src="https://www.google.com/maps/embed?pb=');
+    expect(html).toContain('loading="lazy"');
+    expect(html).toContain('Panorama de ensaio · Google Street View');
+    expect(html).toContain('Ver fachada no Google Maps');
+    expect(html).not.toContain(venue.auditorium);
+  });
 });
