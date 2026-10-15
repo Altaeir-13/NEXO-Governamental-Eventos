@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import type { EventSettings, Participant, Ticket } from '../../shared/types';
+import type { EventSettings, Participant, Speaker, Ticket } from '../../shared/types';
 import { ApiError, authenticate, body, equal, id, keyed, now, originCheck, randomToken, rateLimit, sessionCookie, sha, verifyPassword, type Auth, type Env } from './security';
-import { email, eventSchema, parse, participantSchema, registerSchema, scheduleSchema, speakerSchema } from './validation';
+import { email, eventSchema, httpsUrlSchema, imageUrlSchema, parse, participantSchema, registerSchema, scheduleSchema, speakerSchema, wordCount } from './validation';
 import type { CertificateSnapshot } from '../../shared/pdf';
 
 const json=(data:unknown,status=200,headers:Record<string,string>={})=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer',...headers}});
@@ -11,7 +11,21 @@ async function rows<T>(env:Env,query:string,...args:unknown[]) { return (await s
 function required<T>(value:T|null|undefined,message='Registro não encontrado.'):T { if(value===null || value===undefined) throw new ApiError(404,message); return value; }
 const eventColumns=Object.keys(eventSchema.shape);
 async function getEvent(env:Env,eventId:string):Promise<EventSettings & {active_count:number}> { return required(await one(env,'SELECT * FROM events WHERE id=?',eventId)); }
-function publicEvent(event:EventSettings & {active_count?:number}) { const {active_count:_,...safe}=event; if(!safe.venue_confirmed) safe.auditorium=''; if(!safe.venue_photo_authorized) safe.venue_photo_url=''; return safe; }
+function publicEvent(event:EventSettings & {active_count?:number}) {
+ const {active_count:_,...safe}=event;
+ if(!safe.venue_confirmed) safe.auditorium='';
+ if(!safe.venue_photo_authorized || !safe.venue_photo_url || !imageUrlSchema.safeParse(safe.venue_photo_url).success) {
+  safe.venue_photo_url='';safe.venue_photo_alt='';safe.venue_photo_credit='';safe.venue_photo_source_url='';
+ } else if(!httpsUrlSchema.safeParse(safe.venue_photo_source_url).success) safe.venue_photo_source_url='';
+ return safe;
+}
+function publicSpeaker(speaker:Speaker):Speaker {
+ const safe={...speaker};
+ if(!safe.talk_approved) {safe.talk_title='';safe.talk_summary='';}
+ if(!safe.photo_authorized || !safe.photo_url || !imageUrlSchema.safeParse(safe.photo_url).success) {safe.photo_url='';safe.photo_credit='';}
+ if(!httpsUrlSchema.safeParse(safe.social_url).success) safe.social_url='';
+ return safe;
+}
 const participantSelect='SELECT r.id,r.participant_id,p.name,p.email,p.institution,p.course,r.code,r.status,r.created_at,c.checked_in_at,r.certificate_eligible,x.code certificate_code,x.status certificate_status FROM registrations r JOIN participants p ON p.id=r.participant_id LEFT JOIN checkins c ON c.registration_id=r.id LEFT JOIN certificates x ON x.registration_id=r.id';
 async function getParticipant(env:Env,registrationId:string) { return required(await one<Participant>(env,`${participantSelect} WHERE r.id=?`,registrationId)); }
 const audit=(env:Env,actor:Auth,action:string,target:string,details:Record<string,unknown>={})=>sql(env,'INSERT INTO audit_logs(id,actor_id,action,target_id,details) VALUES (?,?,?,?,?)',id(),actor.user.id,action,target,JSON.stringify(details));
@@ -87,7 +101,12 @@ async function saveEvent(request:Request,env:Env,auth:Auth,url:URL,create=false)
  const values=parse(create?eventSchema.partial().required({title:true,slug:true,event_date:true}):eventSchema.partial(),await body(request));
  if(create) {values.latitude??=0;values.longitude??=0;}
  const existing=create?null:await getEvent(env,eventIdFrom(url));
+ // A changed image needs its own authorization; partial API edits cannot inherit
+ // the approval attached to an earlier file.
+ if(existing && values.venue_photo_url!==undefined && values.venue_photo_url!==existing.venue_photo_url && values.venue_photo_authorized!==1) values.venue_photo_authorized=0;
+ if(existing && (['venue','auditorium','address'] as const).some(field=>values[field]!==undefined && values[field]!==existing[field]) && values.venue_confirmed!==1) values.venue_confirmed=0;
  const merged={...existing,...values};
+ if(merged.venue_photo_authorized && (!merged.venue_photo_url?.trim() || !merged.venue_photo_alt?.trim())) throw new ApiError(400,'Informe o caminho da fotografia autorizada e seu texto alternativo.');
  if(merged.registration_starts && merged.registration_ends && Date.parse(merged.registration_starts)>=Date.parse(merged.registration_ends)) throw new ApiError(400,'O encerramento deve ocorrer após a abertura das inscrições.');
  if(merged.certificate_available_at && Date.parse(merged.certificate_available_at)<Date.parse('2026-12-01T03:00:00.000Z')) throw new ApiError(400,'Os certificados devem ser disponibilizados a partir de dezembro de 2026.');
  if(merged.certificates_released && (!merged.certificate_rules_approved || !merged.date_confirmed || !merged.venue_confirmed || !merged.signatories?.trim())) throw new ApiError(400,'Confirme data, local, regras e signatários antes de liberar certificados.');
@@ -109,9 +128,30 @@ async function mutateContent(request:Request,env:Env,auth:Auth,url:URL,kind:'spe
  const eventId=String(current?.event_id||data.event_id||eventIdFrom(url));
  await getEvent(env,eventId);
  if(data.event_id && data.event_id!==eventId) throw new ApiError(400,'Não é possível mover este registro para outro evento.');
+ if(kind==='speakers' && current) {
+  const changed=(fields:string[])=>fields.some(field=>field in data && data[field]!==current[field]);
+  if(changed(['name','role','area','institution']) && data.credentials_verified!==1) data.credentials_verified=0;
+  if(changed(['bio']) && data.bio_approved!==1) data.bio_approved=0;
+  if(changed(['talk_title','talk_summary']) && data.talk_approved!==1) data.talk_approved=0;
+  if(changed(['photo_url']) && data.photo_authorized!==1) data.photo_authorized=0;
+  if(data.published===undefined && (data.credentials_verified===0 || data.bio_approved===0 || (data.invitation_status!==undefined && data.invitation_status!=='confirmed'))) data.published=0;
+ }
  const merged:Record<string,unknown>={...current,...data,event_id:eventId};
  if(!String(merged[kind==='speakers'?'name':'title']||'').trim()) throw new ApiError(400,'Informe o título ou nome.');
- if(kind==='speakers' && merged.published && merged.invitation_status!=='confirmed') throw new ApiError(400,'Somente convidados confirmados podem ser publicados.');
+ if(kind==='speakers') {
+  if(merged.photo_authorized && !String(merged.photo_url||'').trim()) throw new ApiError(400,'Informe o caminho da fotografia antes de autorizar sua exibição.');
+  if(merged.published && (merged.invitation_status!=='confirmed' || merged.credentials_verified!==1 || merged.bio_approved!==1)) throw new ApiError(400,'Para publicar, confirme a participação, verifique nome e qualificação e aprove a mini biografia.');
+  if(merged.published && !String(merged.role||'').trim()) throw new ApiError(400,'Informe o cargo ou profissão antes de publicar.');
+  if(merged.published || merged.bio_approved) {
+   const count=wordCount(String(merged.bio||''));
+   if(count<40 || count>80) throw new ApiError(400,'A mini biografia aprovada deve conter entre 40 e 80 palavras.');
+  }
+  if(merged.talk_approved) {
+   if(!String(merged.talk_title||'').trim()) throw new ApiError(400,'Informe o título da participação antes de aprovar o tema.');
+   const count=wordCount(String(merged.talk_summary||''));
+   if(count<40 || count>90) throw new ApiError(400,'O resumo aprovado da participação deve conter entre 40 e 90 palavras.');
+  }
+ }
  if(kind==='schedule' && merged.speaker_id) {
   const speaker=await one(env,'SELECT id FROM speakers WHERE id=? AND event_id=?',merged.speaker_id,eventId);
   if(!speaker) throw new ApiError(400,'O palestrante deve pertencer ao mesmo evento.');
@@ -219,8 +259,8 @@ async function routes(request:Request,env:Env):Promise<Response> {
  if(path==='/api/event' && method==='GET') {
   const slug=url.searchParams.get('slug');
   const event=required(await one<EventSettings & {active_count:number}>(env,slug?'SELECT * FROM events WHERE slug=?':'SELECT * FROM events ORDER BY event_date DESC LIMIT 1',...(slug?[slug]:[])));
- const [speakers,schedule]=await Promise.all([rows(env,"SELECT * FROM speakers WHERE event_id=? AND published=1 AND invitation_status='confirmed' ORDER BY display_order,id",event.id),rows(env,"SELECT s.id,s.event_id,s.title,s.description,s.start_time,s.end_time,s.time_label,CASE WHEN p.published=1 AND p.invitation_status='confirmed' THEN s.speaker_id ELSE NULL END speaker_id,s.display_order,s.published,s.special FROM schedule_items s LEFT JOIN speakers p ON p.id=s.speaker_id WHERE s.event_id=? AND s.published=1 ORDER BY s.display_order,s.id",event.id)]);
-  return json({event:publicEvent(event),speakers,schedule,remaining:Math.max(0,event.capacity-event.active_count)});
+ const [speakers,schedule]=await Promise.all([rows<Speaker>(env,"SELECT * FROM speakers WHERE event_id=? AND published=1 AND invitation_status='confirmed' AND credentials_verified=1 AND bio_approved=1 ORDER BY display_order,id",event.id),rows(env,"SELECT s.id,s.event_id,s.title,s.description,s.start_time,s.end_time,s.time_label,CASE WHEN p.published=1 AND p.invitation_status='confirmed' AND p.credentials_verified=1 AND p.bio_approved=1 THEN s.speaker_id ELSE NULL END speaker_id,s.display_order,s.published,s.special FROM schedule_items s LEFT JOIN speakers p ON p.id=s.speaker_id WHERE s.event_id=? AND s.published=1 ORDER BY s.display_order,s.id",event.id)]);
+  return json({event:publicEvent(event),speakers:speakers.map(publicSpeaker),schedule,remaining:Math.max(0,event.capacity-event.active_count)});
  }
  if(path==='/api/register' && method==='POST') return register(request,env);
  if((path==='/api/ticket' || path==='/api/certificate') && method==='POST') {
@@ -295,6 +335,7 @@ export async function handleApi(request:Request,env:Env):Promise<Response> {
   if(message.includes('UNIQUE')) return json({error:'Já existe um registro com estes dados.'},409);
   if(message.includes('CERTIFICATE_NOT_ELIGIBLE')) return json({error:'A presença ou a autorização foi alterada durante a emissão. Revise os participantes.'},409);
   if(message.includes('PARTICIPANT_ANONYMIZED')) return json({error:'Uma inscrição anonimizada não pode ser reativada.'},409);
+  if(message.includes('SPEAKER_NOT_APPROVED')) return json({error:'A publicação do convidado exige participação confirmada, qualificação verificada e biografia aprovada.'},400);
   if(message.includes('CHECK constraint') || message.includes('FOREIGN KEY')) return json({error:'A alteração viola uma regra de integridade. Revise os dados.'},400);
   // Do not log request bodies, IP addresses, passwords, session cookies or ticket tokens.
   console.error('NEXO_API_FAILURE',new URL(request.url).pathname.replace(/[a-f0-9]{32,}/g,'[token]'),error instanceof Error?error.name:'unknown');

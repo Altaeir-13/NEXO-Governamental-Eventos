@@ -50,6 +50,8 @@ Abra **http://127.0.0.1:8788**. Entre em **http://127.0.0.1:8788/admin** com a c
 
 Confira o evento no painel: título, capacidade, abertura, data/local confirmados, programação, convidados e contatos. A capacidade inicial é 120; reduzir abaixo das inscrições ativas é recusado. Horários sem confirmação continuam como “A definir”. Só convidados confirmados e publicados aparecem no site.
 
+A atualização editorial também exige nome/qualificação verificados e biografia aprovada antes da publicação de convidados. Tema e fotografia têm autorizações próprias. Em **Dados do evento → Ponto de Encontro**, configure a imagem do local, descrição, crédito e origem. Em **Convidados**, edite a trajetória, a fala e a fotografia; desmarque a publicação para ocultar sem excluir. O [guia de conteúdo e fotografias](CONTEUDO_EDITORIAL.md) explica como adicionar assets ao repositório e registrar aprovações.
+
 ## 4. Testes antes de publicar
 
 ```powershell

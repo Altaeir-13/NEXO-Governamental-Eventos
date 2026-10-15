@@ -41,7 +41,7 @@ Dados de inscrição e presença ficam no banco. O navegador guarda apenas o nec
 
 ## Publicação e decisões institucionais
 
-O site está publicado em **[nexo-governamental-eventos.pages.dev](https://nexo-governamental-eventos.pages.dev)**, com Cloudflare Pages, Functions e D1. O repositório é [Altaeir-13/NEXO-Governamental-Eventos](https://github.com/Altaeir-13/NEXO-Governamental-Eventos), com publicação automática comprovada após commits em `main`. O D1 de produção `nexo-eventos` contém as seis migrations. O administrador foi criado com senha privada, e login, cookies, painel e logout foram verificados no HTTPS público. Consulte o [relatório de implantação](docs/IMPLANTACAO.md) para a configuração e os limites da validação.
+O site está publicado em **[nexo-governamental-eventos.pages.dev](https://nexo-governamental-eventos.pages.dev)**, com Cloudflare Pages, Functions e D1. O repositório é [Altaeir-13/NEXO-Governamental-Eventos](https://github.com/Altaeir-13/NEXO-Governamental-Eventos), com publicação automática comprovada após commits em `main`. O D1 de produção `nexo-eventos` contém as sete migrations, incluindo a atualização editorial aditiva. O administrador foi criado com senha privada, e login, cookies, painel e logout foram verificados no HTTPS público. Consulte o [relatório de implantação](docs/IMPLANTACAO.md) para a configuração e os limites da validação.
 
 O Worker de modelo encontrado na conta foi preservado. Reutilize o projeto Pages `nexo-governamental-eventos` para esta aplicação. Previews automáticos estão desabilitados até receberem D1 e segredo isolados; `[env.preview]` não possui binding `DB`.
 
@@ -52,5 +52,6 @@ Não há serviço pago obrigatório, pagamento, checkout ou envio automático de
 - [Guia completo de instalação, publicação e operação](docs/OPERACAO.md)
 - [Segurança, privacidade e resposta a incidentes](docs/SEGURANCA.md)
 - [Arquitetura e contrato HTTP](docs/ARCHITECTURE.md)
+- [Conteúdo editorial, fotografias e aprovações](docs/CONTEUDO_EDITORIAL.md)
 
 O arquivo ZIP de conversas e demais materiais privados recebidos não são arquivos públicos do site e não devem ser enviados ao GitHub ou para `public/`.

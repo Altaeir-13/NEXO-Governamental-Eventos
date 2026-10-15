@@ -6,7 +6,7 @@ import { Miniflare } from 'miniflare';
 import { unstable_splitSqlQuery } from 'wrangler';
 import { PDFDocument } from 'pdf-lib';
 import { certificatePdf, ticketPdf, type CertificateSnapshot } from '../shared/pdf';
-import type { Ticket } from '../shared/types';
+import type { PublicEvent, Speaker, Ticket } from '../shared/types';
 import { handleApi } from '../functions/_lib/api';
 import { hashPassword, type Env } from '../functions/_lib/security';
 
@@ -15,6 +15,8 @@ import { hashPassword, type Env } from '../functions/_lib/security';
 const ORIGIN = 'https://nexo.test';
 const EVENT = 'slz-2026';
 const PASSWORD = 'Senha apenas ficticia para testes 123!';
+const EDITORIAL_BIO = 'Pessoa Fictícia é profissional de uma instituição de ensino usada exclusivamente neste ensaio. Sua trajetória fictícia reúne atividades de formação, pesquisa e diálogo sobre direitos fundamentais e reintegração social. Participa desta simulação para verificar a apresentação de informações institucionais aprovadas, sem representar uma pessoa real ou qualquer credencial profissional verdadeira.';
+const EDITORIAL_TALK = 'A participação fictícia aborda os desafios da reintegração social e o papel das instituições na ampliação de oportunidades. O encontro de teste propõe uma reflexão sobre estigma, acesso a direitos e vínculos comunitários, relacionando diferentes perspectivas profissionais para avaliar exclusivamente o funcionamento editorial da plataforma.';
 type Session = { cookie: string; csrf: string };
 type Registration = { token: string; code: string; id: string };
 let mf: Miniflare;
@@ -87,6 +89,8 @@ describe.sequential('plataforma integrada com D1 isolado', () => {
   beforeEach(async () => {
     const reset = ['idempotency_keys', 'certificate_history', 'certificates', 'checkins', 'tickets', 'registrations', 'participants', 'sessions', 'audit_logs', 'admin_users', 'rate_limits']
       .map(table => db.prepare(`DELETE FROM ${table}`));
+    reset.push(db.prepare("DELETE FROM schedule_items WHERE id LIKE 'qa-%'"), db.prepare("DELETE FROM speakers WHERE id LIKE 'qa-%'"));
+    reset.push(db.prepare("UPDATE events SET venue_photo_url='',venue_photo_authorized=0,venue_photo_alt='',venue_photo_credit='',venue_photo_source_url='' WHERE id=?").bind(EVENT));
     reset.push(db.prepare("UPDATE events SET active_count=0,capacity=120,registration_open=1,registration_starts=NULL,registration_ends=NULL,certificates_released=0,certificate_rules_approved=0,date_confirmed=0,venue_confirmed=0,event_date='2026-11-11',certificate_available_at='2026-12-01T03:00:00.000Z',signatories='' WHERE id=?").bind(EVENT));
     for (const role of ['admin', 'checkin']) reset.push(db.prepare('INSERT INTO admin_users(id,email,name,password_hash,role) VALUES (?,?,?,?,?)')
       .bind(role, `${role}@example.invalid`, `Operador fictício ${role}`, passwordHash, role));
@@ -105,6 +109,103 @@ describe.sequential('plataforma integrada com D1 isolado', () => {
     expect(data.speakers).toHaveLength(0);
     expect(JSON.stringify(data)).not.toContain('password_hash');
     expect(JSON.stringify(data)).not.toContain('@example.invalid');
+  });
+
+  it('exige confirmação e aprovação editorial sem divulgar rascunhos, fotografias ou temas pendentes', async () => {
+    const admin = await login();
+    const created = await request(`/admin/speakers?eventId=${EVENT}`, 'POST', {
+      name: 'Pessoa Fictícia Editorial', role: 'Profissional fictícia', bio: EDITORIAL_BIO, institution: 'Instituição fictícia',
+      area: 'Direitos e reintegração', photo_url: '/images/convidados/foto-ficticia.webp', photo_credit: 'Crédito ainda não autorizado',
+      talk_title: 'Proposta reservada para aprovação', talk_summary: EDITORIAL_TALK, invitation_status: 'pending',
+    }, admin);
+    expect(created.status, await created.clone().text()).toBe(201);
+    const { speaker } = await created.json() as { speaker: Speaker };
+    // Use an identifiable fixture ID for deterministic cleanup between tests.
+    await db.prepare('UPDATE speakers SET id=? WHERE id=?').bind('qa-editorial', speaker.id).run();
+    const endpoint = '/admin/speakers/qa-editorial';
+    expect((await request(endpoint, 'PUT', { published: 1 }, admin)).status).toBe(400);
+    expect((await request(endpoint, 'PUT', { invitation_status: 'confirmed', published: 1 }, admin)).status).toBe(400);
+    expect((await request(endpoint, 'PUT', { invitation_status: 'confirmed', published: 1, credentials_verified: 1, bio_approved: 1, bio: 'Resumo curto insuficiente.' }, admin)).status).toBe(400);
+    expect((await request(endpoint, 'PUT', { invitation_status: 'confirmed', published: 1, credentials_verified: 1, bio_approved: 1 }, admin)).status).toBe(200);
+    const response = await request('/event');
+    const visible = await response.json() as PublicEvent;
+    expect(visible.speakers).toHaveLength(1);
+    expect(visible.speakers[0]).toMatchObject({ id: 'qa-editorial', institution: 'Instituição fictícia', bio: EDITORIAL_BIO, photo_url: '', photo_credit: '', talk_title: '', talk_summary: '' });
+    expect(JSON.stringify(visible)).not.toContain('Proposta reservada');
+    expect(JSON.stringify(visible)).not.toContain('foto-ficticia.webp');
+    const drafts = await request(`/admin/speakers?eventId=${EVENT}`, 'GET', undefined, admin);
+    expect((await drafts.json() as { speakers: Speaker[] }).speakers.find(value => value.id === 'qa-editorial'))
+      .toMatchObject({ talk_title: 'Proposta reservada para aprovação', photo_url: '/images/convidados/foto-ficticia.webp' });
+  });
+
+  it('salva biografia, tema e fotografia pelo painel e revoga aprovações após alterações parciais', async () => {
+    const admin = await login();
+    await db.prepare('INSERT INTO speakers(id,event_id,name,role,bio,invitation_status) VALUES (?,?,?,?,?,?)')
+      .bind('qa-roundtrip', EVENT, 'Pessoa Fictícia do Painel', 'Profissão fictícia', EDITORIAL_BIO, 'confirmed').run();
+    const endpoint = '/admin/speakers/qa-roundtrip';
+    expect((await request(endpoint, 'PUT', { talk_approved: 1, talk_title: 'Título fictício', talk_summary: 'Texto insuficiente.' }, admin)).status).toBe(400);
+    const update = await request(endpoint, 'PUT', {
+      credentials_verified: 1, bio_approved: 1, published: 1, photo_authorized: 1,
+      photo_url: '/images/convidados/retrato-ficticio.avif', photo_credit: 'Autorização fictícia do ensaio',
+      talk_title: 'Reintegração e oportunidades', talk_summary: EDITORIAL_TALK, talk_approved: 1,
+      social_url: 'https://example.invalid/perfil', participation_time: '19:30', display_order: 2,
+    }, admin);
+    expect(update.status, await update.clone().text()).toBe(200);
+    expect(await update.json()).toMatchObject({ speaker: { talk_approved: 1, participation_time: '19:30' } });
+    const visible = await (await request('/event')).json() as PublicEvent;
+    expect(visible.speakers[0]).toMatchObject({ bio: EDITORIAL_BIO, talk_title: 'Reintegração e oportunidades', talk_summary: EDITORIAL_TALK, photo_url: '/images/convidados/retrato-ficticio.avif', participation_time: '19:30' });
+
+    expect((await request(endpoint, 'PUT', { talk_title: 'Nova proposta reservada' }, admin)).status).toBe(200);
+    expect((await (await request('/event')).json() as PublicEvent).speakers[0]).toMatchObject({ talk_approved: 0, talk_title: '', talk_summary: '' });
+    const updatedBio = EDITORIAL_BIO.replace('atividades de formação', 'iniciativas de formação');
+    expect((await request(endpoint, 'PUT', { bio: updatedBio }, admin)).status).toBe(200);
+    expect((await (await request('/event')).json() as PublicEvent).speakers).toHaveLength(0);
+    const drafts = await (await request(`/admin/speakers?eventId=${EVENT}`, 'GET', undefined, admin)).json() as { speakers: Speaker[] };
+    expect(drafts.speakers.find(value => value.id === 'qa-roundtrip')).toMatchObject({ bio: updatedBio, bio_approved: 0, published: 0 });
+    expect((await request(endpoint, 'PUT', { published: 1 }, admin)).status).toBe(400);
+    expect((await request(endpoint, 'PUT', { bio_approved: 1, published: 1 }, admin)).status).toBe(200);
+    expect((await (await request('/event')).json() as PublicEvent).speakers[0].bio).toBe(updatedBio);
+    expect((await request(endpoint, 'PUT', { published: 0 }, admin)).status).toBe(200);
+    expect((await (await request('/event')).json() as PublicEvent).speakers).toHaveLength(0);
+  });
+
+  it('oculta vínculos da programação a convidados não publicados e aprovados', async () => {
+    const admin = await login();
+    await db.batch([
+      db.prepare('INSERT INTO speakers(id,event_id,name,role,bio,invitation_status,credentials_verified,bio_approved,published) VALUES (?,?,?,?,?,?,?,?,?)')
+        .bind('qa-schedule-speaker', EVENT, 'Pessoa Fictícia da Programação', 'Profissão fictícia', EDITORIAL_BIO, 'confirmed', 1, 1, 1),
+      db.prepare('INSERT INTO schedule_items(id,event_id,title,speaker_id,published) VALUES (?,?,?,?,1)')
+        .bind('qa-schedule', EVENT, 'Participação fictícia', 'qa-schedule-speaker'),
+    ]);
+    const publicSchedule = async () => (await (await request('/event')).json() as PublicEvent).schedule.find(value => value.id === 'qa-schedule');
+    expect(await publicSchedule()).toMatchObject({ speaker_id: 'qa-schedule-speaker' });
+    expect((await request('/admin/speakers/qa-schedule-speaker', 'PUT', { credentials_verified: 0 }, admin)).status).toBe(200);
+    expect(await publicSchedule()).toMatchObject({ speaker_id: null });
+    const checkin = await login('checkin');
+    expect((await request('/admin/speakers/qa-schedule-speaker', 'PUT', { credentials_verified: 1 }, checkin)).status).toBe(403);
+  });
+
+  it('gerencia a fotografia do local e protege também os dados de imagem no ingresso', async () => {
+    const registration = await register();
+    await db.prepare('UPDATE events SET registration_open=0 WHERE id=?').bind(EVENT).run();
+    const admin = await login();
+    const endpoint = `/admin/event?eventId=${EVENT}`;
+    expect((await request(endpoint, 'PUT', { venue_photo_authorized: 1 }, admin)).status).toBe(400);
+    const saved = await request(endpoint, 'PUT', {
+      venue_description: 'Descrição institucional editada pelo painel.', venue_photo_url: '/images/local/auditorio-ficticio.webp',
+      venue_photo_alt: 'Auditório fictício usado exclusivamente no ensaio.', venue_photo_credit: 'Crédito autorizado fictício',
+      venue_photo_source_url: 'https://example.invalid/autorizacao', venue_photo_authorized: 1,
+    }, admin);
+    expect(saved.status, await saved.clone().text()).toBe(200);
+    expect((await (await request('/event')).json() as PublicEvent).event).toMatchObject({ venue_description: 'Descrição institucional editada pelo painel.', venue_photo_url: '/images/local/auditorio-ficticio.webp', auditorium: '' });
+    expect((await (await request('/ticket', 'POST', { token: registration.token })).json() as Ticket).event.venue_photo_credit).toBe('Crédito autorizado fictício');
+    expect((await request(endpoint, 'PUT', { venue_photo_authorized: 0 }, admin)).status).toBe(200);
+    const redacted = { venue_photo_url: '', venue_photo_alt: '', venue_photo_credit: '', venue_photo_source_url: '' };
+    expect((await (await request('/event')).json() as PublicEvent).event).toMatchObject(redacted);
+    expect((await (await request('/ticket', 'POST', { token: registration.token })).json() as Ticket).event).toMatchObject(redacted);
+    expect((await request(endpoint, 'PUT', { venue_photo_authorized: 1 }, admin)).status).toBe(200);
+    expect((await request(endpoint, 'PUT', { venue_photo_url: '/images/local/outro-ficticio.webp' }, admin)).status).toBe(200);
+    expect((await (await request('/event')).json() as PublicEvent).event).toMatchObject(redacted);
   });
 
   it('registra, normaliza o e-mail e mantém um ingresso individual persistido', async () => {

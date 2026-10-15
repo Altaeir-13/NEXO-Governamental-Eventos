@@ -42,9 +42,17 @@ describe.sequential('migrations distribuídas para D1', () => {
   it('instala todos os gatilhos com o parser Wrangler e mantém produção fechada', async () => {
     const triggers = await db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name").all<{ name: string }>();
     expect(triggers.results.map(row => row.name)).toEqual(expectedTriggers.sort());
-    expect(expectedTriggers).toHaveLength(14);
+    expect(expectedTriggers).toHaveLength(16);
     expect(await db.prepare('SELECT registration_open,certificates_released,certificate_rules_approved,date_confirmed,venue_confirmed FROM events WHERE id=?')
       .bind('slz-2026').first()).toEqual({ registration_open: 0, certificates_released: 0, certificate_rules_approved: 0, date_confirmed: 0, venue_confirmed: 0 });
+  });
+
+  it('mantém os convites existentes sem aprovações presumidas e protege publicação por SQL direto', async () => {
+    const speakers = await db.prepare('SELECT invitation_status,published,credentials_verified,bio_approved,talk_approved,photo_authorized,participation_time FROM speakers').all();
+    expect(speakers.results).toHaveLength(3);
+    for (const speaker of speakers.results) expect(speaker).toEqual({ invitation_status: 'pending', published: 0, credentials_verified: 0, bio_approved: 0, talk_approved: 0, photo_authorized: 0, participation_time: null });
+    await expect(db.prepare("UPDATE speakers SET invitation_status='confirmed',published=1 WHERE id='mauro-rocha'").run()).rejects.toThrow('SPEAKER_NOT_APPROVED');
+    expect(await db.prepare("SELECT venue_description FROM events WHERE id='slz-2026'").first('venue_description')).toContain('Em um ambiente dedicado');
   });
 
   it('preserva capacidade, cancelamento e impedimentos mesmo com SQL direto', async () => {

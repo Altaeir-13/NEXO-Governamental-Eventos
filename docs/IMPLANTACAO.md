@@ -1,5 +1,19 @@
 # Implantação NEXO Governamental — 15/10/2026
 
+## Atualização visual e editorial
+
+As seções **Ponto de Encontro** e **Vozes que ampliam o debate** foram atualizadas preservando o Pages, o D1 e a autenticação existentes. A fotografia do local e os retratos ficam prontos para arquivos autorizados. Nenhuma foto da UNDB foi republicada: a galeria oficial foi inventariada, mas os termos exigem permissão. Mauro Rocha, Ítalo Leite e a participação da Psicologia permanecem pendentes, despublicados e sem aprovações editoriais. Consulte [CONTEUDO_EDITORIAL.md](CONTEUDO_EDITORIAL.md) para fontes, rascunho e operação do painel.
+
+A migration **0007_editorial_content.sql** foi aplicada no D1 remoto após exportação privada para `backups/antes-editorial-20261015.sql` (ignorada pelo Git). Apenas acrescenta campos, dois gatilhos de publicação e a descrição institucional solicitada para o local. As seis migrations anteriores foram preservadas. Antes e depois da aplicação: zero inscrições, zero participantes, zero certificados e um administrador; `registration_open`, `certificates_released` e `certificate_rules_approved` continuam em zero. A confirmação do local também permanece em zero.
+
+Validações desta atualização: TypeScript, build de produção e compilação das Pages Functions aprovados; 63 testes de backend/segurança/migrations/URLs aprovados e oito testes de renderização editorial aprovados após corrigir uma asserção que confundia `ll=` com o atributo SVG `fill=`. O comando separado de integração também passou com 35 testes. O aviso conhecido de tamanho do chunk PDF permanece.
+
+O navegador foi exercitado em 1280 px e 390 px, com D1 efêmero e quatro cadastros fictícios: três públicos e um oculto. Foram conferidos imagem carregável (padrão geométrico exclusivo do ensaio), imagem ausente, arquivo inexistente com retorno às iniciais, créditos ocultados após falha, ausência de rolagem horizontal, links de mapas por endereço e edição/reaprovação da biografia pelo formulário mobile com persistência na página pública do ensaio. Nenhum dado fictício foi inserido em produção. A revisão de acessibilidade incluiu semântica, rótulos, foco, leitura dos textos e respeito ao movimento reduzido; não substitui ensaio com leitores de tela e aparelhos físicos.
+
+A publicação desta revisão usa a integração GitHub → Pages da branch `main`. Não foram criados projeto, banco, bucket, serviço de imagens ou cobrança. O commit e o resultado final do deployment são informados na entrega da atualização.
+
+---
+
 O site está publicado e as Functions estão conectadas ao D1. Inscrições e certificados permanecem bloqueados. A publicação preservou a aplicação existente; as alterações de código ficaram restritas à compatibilidade das migrations, com configuração e documentação da implantação.
 
 ## GitHub e atualização automática
