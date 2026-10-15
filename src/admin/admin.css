@@ -27,4 +27,21 @@
 .adm-editor .adm-field>small,.adm-editor .adm-checkbox small{font-size:12px;line-height:1.7;color:#4a5874}
 .adm-editor .adm-field,.adm-editor .adm-checkbox{font-size:13px}
 .adm-editor .adm-form-footer{margin-top:0}
+.adm-test-banner{display:flex;align-items:flex-start;gap:16px;padding:20px 24px;margin:0 0 24px;background:#eaf6f3;border:1px solid #b4d6ce;border-radius:18px;color:var(--adm-navy)}
+.adm-test-banner strong{display:block;font-size:15px;font-weight:900}
+.adm-test-banner p{font-size:12px;line-height:1.8;margin:5px 0 10px;color:#3f5266}
+.adm-test-banner a{display:inline-flex;align-items:center;gap:7px;min-height:32px;font-size:12px;font-weight:900;text-underline-offset:3px}
+.adm-pill.adm-test-pill{background:#e4f3ed;border-color:#88b5a8;color:#205646}
+.adm-page-heading p>.adm-pill{margin-right:5px;vertical-align:middle}
+.adm-participant-summary{display:flex;gap:12px 24px;flex-wrap:wrap;margin:0 0 20px;padding:15px 18px;background:var(--adm-ice);border:1px solid var(--adm-line);border-radius:14px;font-size:12px}
+.adm-participant-summary strong{font-size:17px;font-weight:900;margin-right:4px}
+.adm-participant-summary>span:last-child{flex-basis:100%;font-size:11px;color:#4a5874}
+.adm-participant-filters{display:flex;align-items:flex-end;gap:16px;margin-bottom:20px}
+.adm-participant-filters>.adm-search{flex:1;margin-bottom:0}
+.adm-participant-filters>.adm-field{width:175px;flex-shrink:0}
+.adm-participants-table{min-width:1050px}
+.adm-test-cleanup{display:flex;align-items:center;justify-content:space-between;gap:24px;border-top:1px solid var(--adm-line);padding-top:24px;margin-top:28px}
+.adm-test-cleanup h3{font-size:16px;font-weight:900}
+.adm-test-cleanup p{font-size:12px;line-height:1.8;color:#4a5874;margin-top:6px;max-width:480px}
+@media(max-width:600px){.adm-test-banner{padding:18px 16px;gap:12px;flex-wrap:wrap}.adm-test-banner>div{flex-basis:100%}.adm-participant-filters{align-items:stretch;flex-direction:column;gap:14px}.adm-participant-filters>.adm-field{width:100%}.adm-test-cleanup{align-items:stretch;flex-direction:column;gap:18px}.adm-test-cleanup .adm-button{font-size:12px;white-space:normal}}
 @media(max-width:600px){.adm-editor-group{padding-top:20px}.adm-editor-group>legend{font-size:16px}.adm-editor-group>p{font-size:12px}.adm-image-preview{padding:14px;gap:14px;align-items:flex-start;flex-wrap:wrap}.adm-image-preview>.adm-content-photo-venue{width:100%;min-height:0}.adm-image-preview>figcaption{flex:1;min-width:130px}.adm-image-preview>.adm-content-photo-venue+figcaption{flex-basis:100%}}

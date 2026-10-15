@@ -26,11 +26,15 @@ function publicSpeaker(speaker:Speaker):Speaker {
  if(!httpsUrlSchema.safeParse(safe.social_url).success) safe.social_url='';
  return safe;
 }
-const participantSelect='SELECT r.id,r.participant_id,p.name,p.email,p.institution,p.course,r.code,r.status,r.created_at,c.checked_in_at,r.certificate_eligible,x.code certificate_code,x.status certificate_status FROM registrations r JOIN participants p ON p.id=r.participant_id LEFT JOIN checkins c ON c.registration_id=r.id LEFT JOIN certificates x ON x.registration_id=r.id';
+const participantSelect='SELECT r.id,r.participant_id,p.name,p.email,r.profile,p.institution,p.course,e.is_test,r.code,r.status,r.created_at,c.checked_in_at,r.certificate_eligible,x.code certificate_code,x.status certificate_status FROM registrations r JOIN participants p ON p.id=r.participant_id JOIN events e ON e.id=r.event_id LEFT JOIN checkins c ON c.registration_id=r.id LEFT JOIN certificates x ON x.registration_id=r.id';
 async function getParticipant(env:Env,registrationId:string) { return required(await one<Participant>(env,`${participantSelect} WHERE r.id=?`,registrationId)); }
 const audit=(env:Env,actor:Auth,action:string,target:string,details:Record<string,unknown>={})=>sql(env,'INSERT INTO audit_logs(id,actor_id,action,target_id,details) VALUES (?,?,?,?,?)',id(),actor.user.id,action,target,JSON.stringify(details));
 function isAdmin(auth:Auth) { if(auth.user.role!=='admin') throw new ApiError(403,'Esta ação exige um administrador.'); }
 function eventIdFrom(url:URL) { return required(url.searchParams.get('eventId'),'Informe o evento.'); }
+function registrationKindFilter(url:URL) {
+ const kind=parse(z.enum(['all','test','official']),url.searchParams.get('kind')||'all');
+ return kind==='all'?'':` AND e.is_test=${kind==='test'?1:0}`;
+}
 async function ticket(env:Env,token:string):Promise<Ticket> {
  if(!/^[a-f0-9]{64}$/.test(token)) throw new ApiError(404,'Ingresso não encontrado ou revogado.');
  const registration=await one<{id:string;event_id:string}> (env,'SELECT r.id,r.event_id FROM tickets t JOIN registrations r ON r.id=t.registration_id WHERE t.token_hash=? AND t.revoked_at IS NULL',await sha(token));
@@ -39,6 +43,7 @@ async function ticket(env:Env,token:string):Promise<Ticket> {
  return {id:p.id,code:p.code,token,name:p.name,status:p.status,checked_in_at:p.checked_in_at,event:publicEvent(event),certificate:p.certificate_code?{code:p.certificate_code,status:p.certificate_status||'revoked'}:null};
 }
 function certificateReady(event:EventSettings) {
+ if(event.is_test) throw new ApiError(409,'Inscrições de teste não emitem certificados válidos.');
  if(!event.certificates_released || !event.certificate_rules_approved || !event.date_confirmed || !event.venue_confirmed || !event.signatories.trim()) throw new ApiError(409,'A coordenação ainda precisa aprovar os dados, as regras e os signatários do certificado.');
  if(Date.now()<Date.parse(event.certificate_available_at) || Date.now()<Date.parse(`${event.event_date}T23:59:59-03:00`)) throw new ApiError(409,'Os certificados ainda não estão disponíveis.');
 }
@@ -50,7 +55,8 @@ async function register(request:Request,env:Env) {
  const data=parse(registerSchema,await body(request));
  if(data.website) throw new ApiError(400,'Não foi possível concluir a inscrição.');
  const event=await getEvent(env,data.eventId);
- const canonical={eventId:data.eventId,name:data.name,email:data.email,institution:data.institution,course:data.course,consent:true};
+ // Empty optional profile preserves the canonical hash of pre-existing retries.
+ const canonical={eventId:data.eventId,name:data.name,email:data.email,institution:data.institution,course:data.course,consent:true,...(data.profile?{profile:data.profile}:{})};
  const bodyHash=await sha(JSON.stringify(canonical)), keyHash=await sha(`${data.eventId}:${data.idempotencyKey}`);
  const token=await keyed(env,`ticket:${data.eventId}:${data.idempotencyKey}`),tokenHash=await sha(token);
  async function replay() {
@@ -67,13 +73,14 @@ async function register(request:Request,env:Env) {
   // D1 batch is a single transaction: capacity, participant, ticket and retry key commit together.
   await env.DB.batch([
    sql(env,'INSERT INTO participants(id,name,email,institution,course) VALUES (?,?,?,?,?)',participantId,data.name,data.email,data.institution,data.course),
-   sql(env,'INSERT INTO registrations(id,event_id,participant_id,email,code,consent_at,consent_text) VALUES (?,?,?,?,?,?,?)',registrationId,data.eventId,participantId,data.email,code,now(),event.privacy_text),
+   sql(env,'INSERT INTO registrations(id,event_id,participant_id,email,code,consent_at,consent_text,profile) VALUES (?,?,?,?,?,?,?,?)',registrationId,data.eventId,participantId,data.email,code,now(),`Ciência do aviso de privacidade${event.is_test?' — inscrição de teste sem validade oficial':''}:\n${event.privacy_text}`,data.profile),
    sql(env,'INSERT INTO tickets(registration_id,token_hash) VALUES (?,?)',registrationId,tokenHash),
    sql(env,'INSERT INTO idempotency_keys(key_hash,event_id,body_hash,registration_id) VALUES (?,?,?,?)',keyHash,data.eventId,bodyHash,registrationId)
   ]);
  } catch(error) {
   const retry=await replay(); if(retry) return retry;
   if(String(error).includes('EVENT_FULL') || String(error).includes('active_count')) throw new ApiError(409,'As vagas deste evento estão esgotadas.');
+  if(String(error).includes('TEST_REGISTRATION_CLOSED')) throw new ApiError(409,'As inscrições de teste foram encerradas.');
   if(String(error).includes('UNIQUE')) throw new ApiError(409,'Não foi possível concluir a inscrição com estes dados. Se você já se inscreveu, use o link salvo ou solicite recuperação à organização.');
   throw error;
  }
@@ -101,17 +108,19 @@ async function saveEvent(request:Request,env:Env,auth:Auth,url:URL,create=false)
  const values=parse(create?eventSchema.partial().required({title:true,slug:true,event_date:true}):eventSchema.partial(),await body(request));
  if(create) {values.latitude??=0;values.longitude??=0;}
  const existing=create?null:await getEvent(env,eventIdFrom(url));
+ if(existing && values.is_test!==undefined && values.is_test!==existing.is_test) throw new ApiError(409,'O tipo teste ou oficial é definido na criação e não pode ser alterado.');
  // A changed image needs its own authorization; partial API edits cannot inherit
  // the approval attached to an earlier file.
  if(existing && values.venue_photo_url!==undefined && values.venue_photo_url!==existing.venue_photo_url && values.venue_photo_authorized!==1) values.venue_photo_authorized=0;
  if(existing && (['venue','auditorium','address'] as const).some(field=>values[field]!==undefined && values[field]!==existing[field]) && values.venue_confirmed!==1) values.venue_confirmed=0;
  const merged={...existing,...values};
+ if(merged.is_test && (merged.certificates_released || merged.certificate_rules_approved)) throw new ApiError(400,'Eventos de teste devem manter emissão e regras de certificados bloqueadas.');
  if(merged.venue_photo_authorized && (!merged.venue_photo_url?.trim() || !merged.venue_photo_alt?.trim())) throw new ApiError(400,'Informe o caminho da fotografia autorizada e seu texto alternativo.');
  if(merged.registration_starts && merged.registration_ends && Date.parse(merged.registration_starts)>=Date.parse(merged.registration_ends)) throw new ApiError(400,'O encerramento deve ocorrer após a abertura das inscrições.');
  if(merged.certificate_available_at && Date.parse(merged.certificate_available_at)<Date.parse('2026-12-01T03:00:00.000Z')) throw new ApiError(400,'Os certificados devem ser disponibilizados a partir de dezembro de 2026.');
  if(merged.certificates_released && (!merged.certificate_rules_approved || !merged.date_confirmed || !merged.venue_confirmed || !merged.signatories?.trim())) throw new ApiError(400,'Confirme data, local, regras e signatários antes de liberar certificados.');
  if(merged.capacity!==undefined && merged.capacity<Number(existing?.active_count||0)) throw new ApiError(409,'A capacidade não pode ser menor que o total de inscrições ativas.');
- if(merged.registration_open && (!merged.date_confirmed || !merged.venue_confirmed || !merged.contact_email?.trim())) throw new ApiError(400,'Confirme data e local e informe o contato institucional antes de abrir as inscrições.');
+ if(merged.registration_open && !merged.is_test && (!merged.date_confirmed || !merged.venue_confirmed || !merged.contact_email?.trim())) throw new ApiError(400,'Confirme data e local e informe o contato institucional antes de abrir as inscrições.');
  const eventId=existing?.id||id(),keys=eventColumns.filter(k=>k in values),data=values as Record<string,unknown>;
  const mutation=create?sql(env,`INSERT INTO events(id,${keys.join(',')}) VALUES (?,${keys.map(()=>'?').join(',')})`,eventId,...keys.map(k=>data[k])):sql(env,`UPDATE events SET ${keys.map(k=>`${k}=?`).join(',')} WHERE id=?`,...keys.map(k=>data[k]),eventId);
  if(!keys.length) throw new ApiError(400,'Nenhuma alteração informada.');
@@ -172,10 +181,12 @@ async function patchParticipant(request:Request,env:Env,auth:Auth,registrationId
  if(data.checkedIn===false) isAdmin(auth);
  if(data.checkedIn && (data.status||current.status)!=='active') throw new ApiError(409,'Não é possível credenciar uma inscrição cancelada.');
  if(data.certificateEligible && (data.status||current.status)!=='active') throw new ApiError(409,'Inscrição cancelada não é elegível.');
+ if(data.certificateEligible && current.is_test) throw new ApiError(400,'Inscrições de teste não são elegíveis para certificados válidos.');
  const changes:D1PreparedStatement[]=[];
  const pkeys=['name','email','institution','course'].filter(k=>k in data);
  if(pkeys.length) changes.push(sql(env,`UPDATE participants SET ${pkeys.map(k=>`${k}=?`).join(',')} WHERE id=?`,...pkeys.map(k=>data[k as keyof typeof data]),current.participant_id));
  if(data.email) changes.push(sql(env,'UPDATE registrations SET email=? WHERE id=?',data.email,registrationId));
+ if(data.profile!==undefined) changes.push(sql(env,'UPDATE registrations SET profile=? WHERE id=?',data.profile,registrationId));
  if(data.status) changes.push(sql(env,'UPDATE registrations SET status=? WHERE id=?',data.status,registrationId));
  if(data.checkedIn===true) changes.push(sql(env,'INSERT INTO checkins(registration_id,actor_id) VALUES (?,?) ON CONFLICT(registration_id) DO NOTHING',registrationId,auth.user.id));
  if(data.checkedIn===false) changes.push(sql(env,'DELETE FROM checkins WHERE registration_id=?',registrationId));
@@ -191,13 +202,44 @@ async function patchParticipant(request:Request,env:Env,auth:Auth,registrationId
 async function anonymize(env:Env,auth:Auth,registrationId:string) {
  isAdmin(auth); const p=await getParticipant(env,registrationId),anonymous=`anon-${id()}@invalid.local`;
  await env.DB.batch([
-  sql(env,"UPDATE registrations SET status='cancelled',email=?,certificate_eligible=0,consent_text='Anonimizado a pedido do titular' WHERE id=?",anonymous,registrationId),
+  sql(env,"UPDATE registrations SET status='cancelled',email=?,profile='',certificate_eligible=0,consent_text='Anonimizado a pedido do titular' WHERE id=?",anonymous,registrationId),
   sql(env,"UPDATE participants SET name='Participante anonimizado',email=?,institution='',course='',anonymized_at=? WHERE id=?",anonymous,now(),p.participant_id),
   sql(env,'DELETE FROM checkins WHERE registration_id=?',registrationId),
   sql(env,"UPDATE certificates SET snapshot='{}',status='revoked',revoked_at=? WHERE registration_id=?",now(),registrationId),
   sql(env,"UPDATE certificate_history SET snapshot='{}' WHERE registration_id=?",registrationId),
   sql(env,'DELETE FROM idempotency_keys WHERE registration_id=?',registrationId),audit(env,auth,'participant.anonymize',registrationId)
  ]); return json({ok:true});
+}
+
+async function cleanupTestData(request:Request,env:Env,auth:Auth) {
+ isAdmin(auth);
+ const data=parse(z.object({eventId:z.string().min(1).max(100),confirmation:z.literal('ANONIMIZAR TESTES')}).strict(),await body(request));
+ const event=await getEvent(env,data.eventId);
+ if(!event.is_test) throw new ApiError(409,'Esta ação é exclusiva para eventos de teste. Nenhum registro oficial foi alterado.');
+ // Refuse shared identities rather than alter participant data used by another
+ // event. This predicate is repeated inside the transaction, not just preflight.
+ const unsafe=`EXISTS (SELECT 1 FROM registrations r JOIN registrations other ON other.participant_id=r.participant_id AND other.event_id!=r.event_id WHERE r.event_id=?) OR EXISTS (SELECT 1 FROM certificates x JOIN registrations r ON r.id=x.registration_id WHERE r.event_id=? AND x.status='issued')`;
+ if(await one(env,`SELECT 1 unsafe WHERE ${unsafe}`,event.id,event.id)) throw new ApiError(409,'A limpeza foi interrompida: há participante compartilhado com outro evento ou certificado emitido. Revise os registros.');
+ const stamp=now();
+ try {
+  const result=await env.DB.batch([
+   // An invalid bit aborts the whole D1 batch if the preflight became stale.
+   // Closing first serializes cleanup against test-registration insert gates.
+   sql(env,`UPDATE events SET registration_open=CASE WHEN is_test=1 AND NOT (${unsafe}) THEN 0 ELSE 2 END WHERE id=?`,event.id,event.id,event.id),
+   sql(env,"INSERT INTO audit_logs(id,actor_id,action,target_id,details) SELECT ?,?,'test-data.cleanup',?,json_object('anonymized',COUNT(*),'registrationClosed',json('true')) FROM participants p WHERE p.anonymized_at IS NULL AND p.id IN (SELECT participant_id FROM registrations WHERE event_id=?)",id(),auth.user.id,event.id,event.id),
+   sql(env,"UPDATE registrations SET status='cancelled',email='anon-test-'||participant_id||'@invalid.local',profile='',certificate_eligible=0,consent_text='Dados de teste anonimizados pela administração' WHERE event_id=?",event.id),
+   sql(env,"UPDATE participants SET name='Participante de teste anonimizado',email='anon-test-'||id||'@invalid.local',institution='',course='',anonymized_at=? WHERE anonymized_at IS NULL AND id IN (SELECT participant_id FROM registrations WHERE event_id=?)",stamp,event.id),
+   sql(env,'UPDATE tickets SET revoked_at=? WHERE registration_id IN (SELECT id FROM registrations WHERE event_id=?)',stamp,event.id),
+   sql(env,'DELETE FROM checkins WHERE registration_id IN (SELECT id FROM registrations WHERE event_id=?)',event.id),
+   sql(env,'DELETE FROM idempotency_keys WHERE event_id=?',event.id),
+   sql(env,"UPDATE certificates SET snapshot='{}',status='revoked',revoked_at=? WHERE registration_id IN (SELECT id FROM registrations WHERE event_id=?)",stamp,event.id),
+   sql(env,"UPDATE certificate_history SET snapshot='{}' WHERE registration_id IN (SELECT id FROM registrations WHERE event_id=?)",event.id)
+  ]);
+  return json({anonymized:result[3].meta.changes,registrationClosed:true});
+ } catch(error) {
+  if(String(error).includes('CHECK constraint')) throw new ApiError(409,'A limpeza foi interrompida por uma alteração concorrente. Revise os registros e tente novamente.');
+  throw error;
+ }
 }
 
 async function recover(request:Request,env:Env,auth:Auth,registrationId:string) {
@@ -258,7 +300,7 @@ async function routes(request:Request,env:Env):Promise<Response> {
  if(!['GET','HEAD','OPTIONS'].includes(method)) originCheck(request);
  if(path==='/api/event' && method==='GET') {
   const slug=url.searchParams.get('slug');
-  const event=required(await one<EventSettings & {active_count:number}>(env,slug?'SELECT * FROM events WHERE slug=?':'SELECT * FROM events ORDER BY event_date DESC LIMIT 1',...(slug?[slug]:[])));
+  const event=required(await one<EventSettings & {active_count:number}>(env,slug?'SELECT * FROM events WHERE slug=?':'SELECT * FROM events WHERE is_test=0 ORDER BY event_date DESC LIMIT 1',...(slug?[slug]:[])));
  const [speakers,schedule]=await Promise.all([rows<Speaker>(env,"SELECT * FROM speakers WHERE event_id=? AND published=1 AND invitation_status='confirmed' AND credentials_verified=1 AND bio_approved=1 ORDER BY display_order,id",event.id),rows(env,"SELECT s.id,s.event_id,s.title,s.description,s.start_time,s.end_time,s.time_label,CASE WHEN p.published=1 AND p.invitation_status='confirmed' AND p.credentials_verified=1 AND p.bio_approved=1 THEN s.speaker_id ELSE NULL END speaker_id,s.display_order,s.published,s.special FROM schedule_items s LEFT JOIN speakers p ON p.id=s.speaker_id WHERE s.event_id=? AND s.published=1 ORDER BY s.display_order,s.id",event.id)]);
   return json({event:publicEvent(event),speakers:speakers.map(publicSpeaker),schedule,remaining:Math.max(0,event.capacity-event.active_count)});
  }
@@ -287,6 +329,7 @@ async function routes(request:Request,env:Env):Promise<Response> {
  if(path==='/api/admin/session' && method==='GET') return json({user:auth.user,csrf:auth.csrf});
  if(path==='/api/admin/logout' && method==='POST') { await sql(env,'DELETE FROM sessions WHERE token_hash=?',auth.tokenHash).run(); return json({ok:true},200,{'Set-Cookie':sessionCookie(request,'',true)}); }
  if(path==='/api/admin/check-in' && method==='POST') return checkIn(request,env,auth);
+ if(path==='/api/admin/test-data/cleanup' && method==='POST') return cleanupTestData(request,env,auth);
  if(path==='/api/admin/events' && method==='GET') return json({events:await rows(env,'SELECT * FROM events ORDER BY event_date DESC')});
  if(path==='/api/admin/events' && method==='POST') return saveEvent(request,env,auth,url,true);
  if(path==='/api/admin/event' && method==='GET') return json({event:await getEvent(env,eventIdFrom(url))});
@@ -298,7 +341,7 @@ async function routes(request:Request,env:Env):Promise<Response> {
  }
  if(path==='/api/admin/participants' && method==='GET') {
   const q=(url.searchParams.get('q')||'').slice(0,150),eventId=eventIdFrom(url);
-  return json({participants:await rows(env,`${participantSelect} WHERE r.event_id=? AND (p.name LIKE ? OR p.email LIKE ? OR r.code LIKE ?) ORDER BY r.created_at DESC LIMIT 2000`,eventId,`%${q}%`,`%${q}%`,`%${q}%`)});
+  return json({participants:await rows(env,`${participantSelect} WHERE r.event_id=?${registrationKindFilter(url)} AND (p.name LIKE ? OR p.email LIKE ? OR r.code LIKE ?) ORDER BY r.created_at DESC LIMIT 2000`,eventId,`%${q}%`,`%${q}%`,`%${q}%`)});
  }
  const participantMatch=path.match(/^\/api\/admin\/participants\/([^/]+)(\/recover)?$/);
  if(participantMatch) {
@@ -313,9 +356,11 @@ async function routes(request:Request,env:Env):Promise<Response> {
   if((method==='POST' && !contentMatch[2]) || ((method==='PUT'||method==='DELETE') && contentMatch[2])) return mutateContent(request,env,auth,url,kind,contentMatch[2]);
  }
  if(path==='/api/admin/export' && method==='GET') {
-  isAdmin(auth); const participants=await rows<Participant>(env,`${participantSelect} WHERE r.event_id=? ORDER BY p.name COLLATE NOCASE`,eventIdFrom(url));
+  isAdmin(auth); const q=(url.searchParams.get('q')||'').slice(0,150);
+  const participants=await rows<Participant>(env,`${participantSelect} WHERE r.event_id=?${registrationKindFilter(url)} AND (p.name LIKE ? OR p.email LIKE ? OR r.code LIKE ?) ORDER BY p.name COLLATE NOCASE`,eventIdFrom(url),`%${q}%`,`%${q}%`,`%${q}%`);
   const escape=(value:unknown)=>{let s=String(value??''); if(/^[\s\u0000-\u001f]*[=+@-]/.test(s)) s=`'${s}`; return `"${s.replace(/"/g,'""')}"`;};
-  const csv=[['Código','Nome','E-mail','Instituição','Curso','Situação','Inscrição','Credenciamento','Certificado aprovado'],...participants.map(p=>[p.code,p.name,p.email,p.institution,p.course,p.status,p.created_at,p.checked_in_at,p.certificate_eligible?'Sim':'Não'])].map(line=>line.map(escape).join(';')).join('\r\n');
+  const profiles:Record<string,string>={student:'Estudante',teacher:'Professor(a)',professional:'Profissional',other:'Outro'};
+  const csv=[['Código','Nome','E-mail','Perfil','Instituição','Curso ou área','Situação','Inscrição','Credenciamento','Certificado aprovado','Tipo de registro'],...participants.map(p=>[p.code,p.name,p.email,profiles[p.profile]||'',p.institution,p.course,p.status,p.created_at,p.checked_in_at,p.certificate_eligible?'Sim':'Não',p.is_test?'Teste':'Oficial'])].map(line=>line.map(escape).join(';')).join('\r\n');
   await audit(env,auth,'participants.export',eventIdFrom(url),{count:participants.length}).run();
   return new Response(`\uFEFF${csv}`,{headers:{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="participantes-nexo.csv"','Cache-Control':'no-store'}});
  }
@@ -332,6 +377,9 @@ export async function handleApi(request:Request,env:Env):Promise<Response> {
   if(error instanceof ApiError) return json({error:error.message},error.status,error.status===429?{'Retry-After':'900'}:{});
   const message=String(error);
   if(message.includes('EVENT_FULL') || message.includes('active_count')) return json({error:'As vagas estão esgotadas ou a capacidade informada é insuficiente.'},409);
+  if(message.includes('TEST_REGISTRATION_CLOSED')) return json({error:'As inscrições de teste foram encerradas.'},409);
+  if(message.includes('EVENT_KIND_IMMUTABLE')) return json({error:'O tipo teste ou oficial não pode ser alterado após a criação.'},409);
+  if(message.includes('TEST_CERTIFICATE_FORBIDDEN')) return json({error:'Eventos de teste não podem emitir certificados válidos.'},409);
   if(message.includes('UNIQUE')) return json({error:'Já existe um registro com estes dados.'},409);
   if(message.includes('CERTIFICATE_NOT_ELIGIBLE')) return json({error:'A presença ou a autorização foi alterada durante a emissão. Revise os participantes.'},409);
   if(message.includes('PARTICIPANT_ANONYMIZED')) return json({error:'Uma inscrição anonimizada não pode ser reativada.'},409);

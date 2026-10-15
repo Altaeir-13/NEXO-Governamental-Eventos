@@ -23,6 +23,12 @@ POST `/api/admin/login` e GET `/api/admin/session` retornam `AdminSession`. POST
 
 EventSettings e tipos são compartilhados em `shared/types.ts`. Rotas administrativas respeitam o papel `admin` ou `checkin`. Painel envia campos de EventSettings para edição; respostas não retornam segredos. A API decide elegibilidade, abertura, capacidade e confirmação.
 
+## Inscrições de teste
+
+A migration aditiva `0008_test_registrations.sql` acrescenta `events.is_test` e `registrations.profile`. O tipo é imutável e derivado do evento na resposta administrativa. A homepage seleciona somente eventos oficiais, enquanto o teste exige slug explícito. POST `/api/register` também aceita `profile` opcional (`student`, `teacher`, `professional`, `other` ou vazio). O campo histórico `consent` registra ciência do aviso; o texto e instante são armazenados em `consent_text`/`consent_at`. Perfil vazio mantém compatibilidade da chave idempotente anterior.
+
+GET de participantes e CSV aceita `kind=all|test|official` junto de evento e busca. POST `/api/admin/test-data/cleanup` exige administrador, CSRF e `{eventId,confirmation:"ANONIMIZAR TESTES"}`. Fecha e anonimiza exclusivamente o evento de teste em batch atômico, preservando auditoria e recusando identidades compartilhadas ou certificado emitido. Gatilhos serializam a limpeza contra novas inscrições e impedem certificados de teste, mantendo as regras oficiais intactas. Consulte [o roteiro de testes](TESTES_INSCRICAO.md).
+
 ## Conteúdo editorial
 
 A migration aditiva `0007_editorial_content.sql` acrescenta descrição e metadados da foto do local, vínculo profissional, horário, tema/resumo e aprovações dos convidados. Os campos existentes de instituição, auditório, endereço, foto, biografia, confirmação e publicação são reaproveitados. Nenhuma tabela operacional é substituída.

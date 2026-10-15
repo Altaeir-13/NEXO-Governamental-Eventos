@@ -6,7 +6,7 @@ import { Miniflare } from 'miniflare';
 import { unstable_splitSqlQuery } from 'wrangler';
 import { PDFDocument } from 'pdf-lib';
 import { certificatePdf, ticketPdf, type CertificateSnapshot } from '../shared/pdf';
-import type { PublicEvent, Speaker, Ticket } from '../shared/types';
+import type { EventSettings, Participant, PublicEvent, Speaker, Ticket } from '../shared/types';
 import { handleApi } from '../functions/_lib/api';
 import { hashPassword, type Env } from '../functions/_lib/security';
 
@@ -58,6 +58,15 @@ async function login(role: 'admin' | 'checkin' = 'admin') {
   return { cookie: cookie!, csrf: data.csrf };
 }
 
+async function createTestEvent(admin: Session, overrides: Record<string, unknown> = {}) {
+  const response = await request('/admin/events', 'POST', {
+    slug: 'qa-teste-inscricoes', title: 'NEXO — ensaio de inscrição sem validade oficial', event_date: '2099-01-01',
+    is_test: 1, registration_open: 1, capacity: 120, ...overrides,
+  }, admin);
+  expect(response.status, await response.clone().text()).toBe(201);
+  return (await response.json() as { event: EventSettings }).event;
+}
+
 async function attend(registration: Registration, admin: Session) {
   const response = await request('/admin/check-in', 'POST', { eventId: EVENT, token: registration.token, confirmIdentity: true }, admin);
   expect(response.status, await response.clone().text()).toBe(200);
@@ -89,6 +98,7 @@ describe.sequential('plataforma integrada com D1 isolado', () => {
   beforeEach(async () => {
     const reset = ['idempotency_keys', 'certificate_history', 'certificates', 'checkins', 'tickets', 'registrations', 'participants', 'sessions', 'audit_logs', 'admin_users', 'rate_limits']
       .map(table => db.prepare(`DELETE FROM ${table}`));
+    reset.push(db.prepare('DELETE FROM events WHERE is_test=1'));
     reset.push(db.prepare("DELETE FROM schedule_items WHERE id LIKE 'qa-%'"), db.prepare("DELETE FROM speakers WHERE id LIKE 'qa-%'"));
     reset.push(db.prepare("UPDATE events SET venue_photo_url='',venue_photo_authorized=0,venue_photo_alt='',venue_photo_credit='',venue_photo_source_url='' WHERE id=?").bind(EVENT));
     reset.push(db.prepare("UPDATE events SET active_count=0,capacity=120,registration_open=1,registration_starts=NULL,registration_ends=NULL,certificates_released=0,certificate_rules_approved=0,date_confirmed=0,venue_confirmed=0,event_date='2026-11-11',certificate_available_at='2026-12-01T03:00:00.000Z',signatories='' WHERE id=?").bind(EVENT));
@@ -244,6 +254,165 @@ describe.sequential('plataforma integrada com D1 isolado', () => {
     expect(duplicate.status).toBe(409);
     expect(await db.prepare('SELECT count(*) AS total FROM registrations').first('total')).toBe(1);
   });
+
+  it('aceita campos opcionais vazios e todos os perfis permitidos, registrando ciência da privacidade', async () => {
+    for (const profile of ['', 'student', 'teacher', 'professional', 'other']) {
+      const registration = await register({ profile, institution: '', course: '' });
+      const persisted = await db.prepare('SELECT profile,consent_at,consent_text FROM registrations WHERE id=?').bind(registration.id)
+        .first<{ profile: string; consent_at: string; consent_text: string }>();
+      expect(persisted?.profile).toBe(profile);
+      expect(persisted?.consent_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(persisted?.consent_text).toContain('dados');
+      expect(await db.prepare('SELECT institution,course FROM participants WHERE id=(SELECT participant_id FROM registrations WHERE id=?)')
+        .bind(registration.id).first()).toEqual({ institution: '', course: '' });
+    }
+    const invalid = await request('/register', 'POST', registrationBody({ profile: 'valor-inventado' }));
+    expect(invalid.status).toBe(400);
+    const admin = await login();
+    const { participants } = await (await request(`/admin/participants?eventId=${EVENT}`, 'GET', undefined, admin)).json() as { participants: Participant[] };
+    expect(participants.map(p => p.profile).sort()).toEqual(['', 'student', 'teacher', 'professional', 'other'].sort());
+    expect(participants.every(p => p.is_test === 0)).toBe(true);
+  }, 20_000);
+
+  it('preserva repetição de solicitações anteriores sem perfil e inclui perfil preenchido na idempotência', async () => {
+    const previousPayload = registrationBody();
+    const first = await request('/register', 'POST', previousPayload);
+    expect(first.status).toBe(201);
+    const replay = await request('/register', 'POST', { ...previousPayload, profile: '' });
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual(await first.json());
+    expect((await request('/register', 'POST', { ...previousPayload, profile: 'student' })).status).toBe(409);
+    const profilePayload = registrationBody({ profile: 'teacher' });
+    const double = await Promise.all([request('/register', 'POST', profilePayload), request('/register', 'POST', profilePayload)]);
+    expect(double.every(r => [200, 201].includes(r.status))).toBe(true);
+    expect(await double[0].json()).toEqual(await double[1].json());
+    expect(await db.prepare('SELECT COUNT(*) total FROM registrations').first('total')).toBe(2);
+  }, 15_000);
+
+  it('mantém teste separado da página oficial, das vagas, da duplicidade e dos filtros administrativos', async () => {
+    const admin = await login(), test = await createTestEvent(admin);
+    const publicOfficial = await (await request('/event')).json() as PublicEvent;
+    expect(publicOfficial.event).toMatchObject({ id: EVENT, is_test: 0 });
+    const sameEmail = 'mesma-pessoa@example.invalid';
+    const officialRegistration = await register({ email: sameEmail });
+    const trial = await register({ eventId: test.id, email: sameEmail, profile: 'student' });
+    expect(officialRegistration.token).not.toBe(trial.token);
+    expect((await request('/register', 'POST', registrationBody({ eventId: test.id, email: sameEmail }))).status).toBe(409);
+    const publicTrial = await (await request(`/event?slug=${test.slug}`)).json() as PublicEvent;
+    expect(publicTrial.event).toMatchObject({ id: test.id, is_test: 1, date_confirmed: 0, venue_confirmed: 0, certificates_released: 0 });
+    expect(publicTrial.remaining).toBe(119);
+    expect((await (await request('/event')).json() as PublicEvent).remaining).toBe(119);
+    const list = await (await request(`/admin/participants?eventId=${test.id}&kind=test&q=mesma-pessoa`, 'GET', undefined, admin)).json() as { participants: Participant[] };
+    expect(list.participants).toHaveLength(1);
+    expect(list.participants[0]).toMatchObject({ id: trial.id, profile: 'student', is_test: 1 });
+    expect((await (await request(`/admin/participants?eventId=${test.id}&kind=official`, 'GET', undefined, admin)).json() as { participants: Participant[] }).participants).toHaveLength(0);
+    const csv = await (await request(`/admin/export?eventId=${test.id}&kind=test`, 'GET', undefined, admin)).text();
+    expect(csv).toContain('Perfil'); expect(csv).toContain('Teste'); expect(csv).toContain(trial.code); expect(csv).not.toContain(officialRegistration.code);
+    expect([400, 409]).toContain((await request(`/admin/event?eventId=${test.id}`, 'PUT', { is_test: 0 }, admin)).status);
+    expect([400, 409]).toContain((await request(`/admin/event?eventId=${EVENT}`, 'PUT', { is_test: 1 }, admin)).status);
+    expect((await request(`/admin/event?eventId=${test.id}`, 'PUT', { is_test: 1, title: test.title }, admin)).status).toBe(200);
+  }, 25_000);
+
+  it('garante capacidade concorrente do teste sem ocupar vagas oficiais e impede QR no evento errado', async () => {
+    const admin = await login(), test = await createTestEvent(admin, { capacity: 1 });
+    const responses = await Promise.all(Array.from({ length: 5 }, () => request('/register', 'POST', registrationBody({ eventId: test.id }))));
+    expect(responses.filter(r => r.status === 201)).toHaveLength(1);
+    expect(responses.filter(r => r.status === 409)).toHaveLength(4);
+    const trial = await responses.find(r => r.status === 201)!.json() as Registration;
+    expect(await db.prepare('SELECT active_count FROM events WHERE id=?').bind(EVENT).first('active_count')).toBe(0);
+    expect(await db.prepare('SELECT active_count FROM events WHERE id=?').bind(test.id).first('active_count')).toBe(1);
+    expect((await request('/admin/check-in', 'POST', { eventId: EVENT, token: trial.token, confirmIdentity: true }, admin)).status).toBe(404);
+    expect((await request('/admin/check-in', 'POST', { eventId: test.id, token: trial.token, confirmIdentity: true }, admin)).status).toBe(200);
+    const response = await request('/ticket', 'POST', { token: trial.token });
+    const ticket = await response.json() as Ticket;
+    expect(ticket.event.is_test).toBe(1);
+    const pdf = await PDFDocument.load(await ticketPdf(ticket, ORIGIN));
+    expect(pdf.getPageCount()).toBe(1);
+    expect((await request(`/admin/participants/${trial.id}`, 'PATCH', { status: 'cancelled' }, admin)).status).toBe(200);
+    expect((await request('/ticket', 'POST', { token: trial.token })).status).toBe(404);
+    expect(await db.prepare('SELECT active_count FROM events WHERE id=?').bind(test.id).first('active_count')).toBe(0);
+  }, 25_000);
+
+  it('exige administrador, CSRF e confirmação explícita para limpeza e recusa o evento oficial', async () => {
+    const admin = await login(), operator = await login('checkin'), test = await createTestEvent(admin);
+    const cleanup = { eventId: test.id, confirmation: 'ANONIMIZAR TESTES' };
+    expect((await request('/admin/test-data/cleanup', 'POST', cleanup)).status).toBe(401);
+    expect((await request('/admin/test-data/cleanup', 'POST', cleanup, operator)).status).toBe(403);
+    expect((await request('/admin/test-data/cleanup', 'POST', cleanup, { ...admin, csrf: 'invalido' })).status).toBe(403);
+    expect((await request('/admin/test-data/cleanup', 'POST', { ...cleanup, confirmation: 'sim' }, admin)).status).toBe(400);
+    expect([400, 409]).toContain((await request('/admin/test-data/cleanup', 'POST', { ...cleanup, eventId: EVENT }, admin)).status);
+    expect(await db.prepare('SELECT registration_open FROM events WHERE id=?').bind(test.id).first('registration_open')).toBe(1);
+  }, 15_000);
+
+  it('encerra e anonimiza exclusivamente testes, preservando ingresso, certificado e auditoria oficiais', async () => {
+    const admin = await login(), test = await createTestEvent(admin);
+    const official = await register({ name: 'Pessoa Oficial Preservada' });
+    await enableCertificate(official, admin);
+    expect((await request('/admin/certificates', 'POST', { registrationIds: [official.id], action: 'issue' }, admin)).status).toBe(200);
+    const beforeOfficial = await db.prepare('SELECT * FROM registrations WHERE id=?').bind(official.id).first();
+    const beforeCertificate = await db.prepare('SELECT * FROM certificates WHERE registration_id=?').bind(official.id).first();
+    const first = await register({ eventId: test.id, name: 'Pessoa Teste a Anonimizar', profile: 'professional' });
+    const second = await register({ eventId: test.id, name: 'Outra Pessoa de Ensaio' });
+    expect((await request('/admin/check-in', 'POST', { eventId: test.id, token: first.token, confirmIdentity: true }, admin)).status).toBe(200);
+    expect((await request(`/admin/participants/${second.id}`, 'PATCH', { status: 'cancelled' }, admin)).status).toBe(200);
+    const cleaned = await request('/admin/test-data/cleanup', 'POST', { eventId: test.id, confirmation: 'ANONIMIZAR TESTES' }, admin);
+    expect(cleaned.status, await cleaned.clone().text()).toBe(200);
+    expect(await cleaned.json()).toMatchObject({ anonymized: 2, registrationClosed: true });
+    expect(await db.prepare('SELECT active_count,registration_open FROM events WHERE id=?').bind(test.id).first()).toEqual({ active_count: 0, registration_open: 0 });
+    expect((await request('/register', 'POST', registrationBody({ eventId: test.id }))).status).toBe(409);
+    expect((await request('/ticket', 'POST', { token: first.token })).status).toBe(404);
+    const privateTestRecords = await db.prepare('SELECT p.name,p.email,p.institution,p.course,p.anonymized_at,r.profile,r.status FROM participants p JOIN registrations r ON r.participant_id=p.id WHERE r.event_id=?').bind(test.id).all();
+    expect(privateTestRecords.results).toHaveLength(2);
+    expect(privateTestRecords.results.every(p => p.anonymized_at && p.name === 'Participante de teste anonimizado' && p.profile === '' && p.status === 'cancelled')).toBe(true);
+    expect(JSON.stringify(privateTestRecords.results)).not.toContain('@example.invalid');
+    expect(await db.prepare('SELECT * FROM registrations WHERE id=?').bind(official.id).first()).toEqual(beforeOfficial);
+    expect(await db.prepare('SELECT * FROM certificates WHERE registration_id=?').bind(official.id).first()).toEqual(beforeCertificate);
+    expect((await request('/ticket', 'POST', { token: official.token })).status).toBe(200);
+    expect(await db.prepare('SELECT COUNT(*) total FROM admin_users').first('total')).toBe(2);
+    expect(await db.prepare('SELECT COUNT(*) total FROM audit_logs WHERE target_id=?').bind(test.id).first('total')).toBeGreaterThan(1);
+    const again = await request('/admin/test-data/cleanup', 'POST', { eventId: test.id, confirmation: 'ANONIMIZAR TESTES' }, admin);
+    expect(again.status).toBe(200);
+    expect(await again.json()).toMatchObject({ anonymized: 0 });
+  }, 30_000);
+
+  it('limpeza concorrente impede novas inscrições após o encerramento, sem deixar dados pessoais ativos', async () => {
+    const admin = await login(), test = await createTestEvent(admin);
+    await register({ eventId: test.id });
+    const [cleaned, registration] = await Promise.all([
+      request('/admin/test-data/cleanup', 'POST', { eventId: test.id, confirmation: 'ANONIMIZAR TESTES' }, admin),
+      request('/register', 'POST', registrationBody({ eventId: test.id })),
+    ]);
+    expect(cleaned.status, await cleaned.clone().text()).toBe(200);
+    expect([201, 409]).toContain(registration.status);
+    expect(await db.prepare('SELECT active_count,registration_open FROM events WHERE id=?').bind(test.id).first()).toEqual({ active_count: 0, registration_open: 0 });
+    expect(await db.prepare('SELECT COUNT(*) total FROM participants p JOIN registrations r ON r.participant_id=p.id WHERE r.event_id=? AND p.anonymized_at IS NULL').bind(test.id).first('total')).toBe(0);
+  }, 15_000);
+
+  it('recusa limpeza de teste quando uma identidade também pertence a outro evento', async () => {
+    const admin = await login(), test = await createTestEvent(admin);
+    const official = await register(), trial = await register({ eventId: test.id });
+    const officialParticipant = await db.prepare('SELECT participant_id FROM registrations WHERE id=?').bind(official.id).first('participant_id');
+    await db.prepare('UPDATE registrations SET participant_id=? WHERE id=?').bind(officialParticipant, trial.id).run();
+    const original = await db.prepare('SELECT * FROM participants WHERE id=?').bind(officialParticipant).first();
+    const response = await request('/admin/test-data/cleanup', 'POST', { eventId: test.id, confirmation: 'ANONIMIZAR TESTES' }, admin);
+    expect(response.status).toBe(409);
+    expect(await db.prepare('SELECT * FROM participants WHERE id=?').bind(officialParticipant).first()).toEqual(original);
+    expect(await db.prepare('SELECT registration_open,active_count FROM events WHERE id=?').bind(test.id).first()).toEqual({ registration_open: 1, active_count: 1 });
+    expect((await request('/ticket', 'POST', { token: official.token })).status).toBe(200);
+  }, 15_000);
+
+  it('protege o tipo do evento e bloqueia certificados de teste mesmo por alterações administrativas ou SQL direto', async () => {
+    const admin = await login(), test = await createTestEvent(admin), trial = await register();
+    // The official registration above is a control and must remain usable.
+    expect((await request('/ticket', 'POST', { token: trial.token })).status).toBe(200);
+    const testRegistration = await register({ eventId: test.id });
+    expect((await request('/admin/certificates', 'POST', { registrationIds: [testRegistration.id], action: 'issue' }, admin)).status).toBe(409);
+    expect((await request('/certificate', 'POST', { token: testRegistration.token })).status).toBe(409);
+    expect([400, 409]).toContain((await request(`/admin/event?eventId=${test.id}`, 'PUT', { certificates_released: 1, certificate_rules_approved: 1, date_confirmed: 1, venue_confirmed: 1, signatories: 'Signatário fictício' }, admin)).status);
+    await expect(db.prepare('UPDATE events SET is_test=1 WHERE id=?').bind(EVENT).run()).rejects.toThrow();
+    await expect(db.prepare('UPDATE events SET certificates_released=1 WHERE id=?').bind(test.id).run()).rejects.toThrow();
+    await expect(db.prepare("INSERT INTO certificates(id,registration_id,code,status,issued_by,snapshot) VALUES ('qa-test-cert',?,'QA-SEM-VALIDADE','issued','admin','{}')").bind(testRegistration.id).run()).rejects.toThrow();
+  }, 15_000);
 
   it.each([
     { name: '' }, { email: 'sem-arroba' }, { consent: false }, { name: 'a'.repeat(300) }, { website: 'spam' },

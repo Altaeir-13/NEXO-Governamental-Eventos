@@ -1,5 +1,13 @@
 # Implantação NEXO Governamental — 15/10/2026
 
+## Modo de inscrições de teste
+
+A atualização acrescenta o evento isolado **NEXO — Inscrições de teste**, acessível em `/inscricao?evento=teste-inscricoes`, mantendo `slz-2026` fechado e os certificados bloqueados. A migration aditiva **0008_test_registrations.sql** foi aplicada no D1 existente após exportação privada `backups/antes-inscricoes-teste-20261015.sql` (23.638 bytes). Nenhuma migration anterior foi alterada; as configurações e os dados oficiais foram preservados.
+
+Validações da revisão: 150 testes da suíte completa, incluindo 44 de integração com D1 efêmero, além de três testes do middleware real com HTMLRewriter, aprovados; TypeScript, build e compilação das Pages Functions aprovados. O teste dedicado de integração também passou em execução anterior com 43 cenários. O PDF fictício de teste foi renderizado com Poppler e inspecionado. O aviso conhecido do tamanho do chunk PDF permanece. As evidências finais de commit, deployment e ensaio no HTTPS público são informadas na entrega.
+
+O teste usa perfil opcional, ciência do aviso contextual, ingresso/QR sem validade oficial, filtros administrativos e limpeza transacional exclusiva para teste. API padrão, metadados da homepage e sitemap excluem eventos de teste. Os certificados de teste são bloqueados também no D1. Consulte [TESTES_INSCRICAO.md](TESTES_INSCRICAO.md) para operar, encerrar, reabrir uma rodada e abrir oficialmente após autorização.
+
 ## Atualização visual e editorial
 
 As seções **Ponto de Encontro** e **Vozes que ampliam o debate** foram atualizadas preservando o Pages, o D1 e a autenticação existentes. A fotografia do local e os retratos ficam prontos para arquivos autorizados. Nenhuma foto da UNDB foi republicada: a galeria oficial foi inventariada, mas os termos exigem permissão. Mauro Rocha, Ítalo Leite e a participação da Psicologia permanecem pendentes, despublicados e sem aprovações editoriais. Consulte [CONTEUDO_EDITORIAL.md](CONTEUDO_EDITORIAL.md) para fontes, rascunho e operação do painel.

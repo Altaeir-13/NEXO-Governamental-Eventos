@@ -40,21 +40,32 @@ async function document() {
 }
 export async function ticketPdf(ticket:Ticket,origin:string) {
  const {pdf,font}=await document(),page=pdf.addPage([595.28,841.89]),w=page.getWidth();
+ const isTest=Boolean(ticket.event.is_test);
  page.drawRectangle({x:0,y:0,width:w,height:842,color:ice});
  page.drawRectangle({x:0,y:702,width:w,height:140,color:navy});mark(page,font,42,785,true);
- page.drawText('INGRESSO GRATUITO',{x:42,y:735,size:15,font,color:white});
+ page.drawText(isTest?'INGRESSO DE TESTE — SEM VALIDADE OFICIAL':'INGRESSO GRATUITO',{x:42,y:735,size:isTest?12:15,font,color:white});
  let y=paragraph(page,ticket.event.title,font,21,42,663,w-84,28);
- y=paragraph(page,ticket.name,font,25,42,y-25,w-84,32);
- y=paragraph(page,`${date(ticket.event.event_date)}${ticket.event.date_confirmed?'':' — data prevista, a confirmar'}`,font,12,42,y-21,w-84);
- y=paragraph(page,`${ticket.event.venue}${ticket.event.venue_confirmed&&ticket.event.auditorium?` — ${ticket.event.auditorium}`:''}${ticket.event.venue_confirmed?'':' — local previsto, a confirmar'}`,font,12,42,y-12,w-84);
- y=paragraph(page,ticket.event.address,font,11,42,y-8,w-84);
+ let nameSize=25;while(nameSize>15&&lines(ticket.name,font,nameSize,w-84).length*nameSize*1.28>110)nameSize--;
+ y=paragraph(page,ticket.name,font,nameSize,42,y-25,w-84,nameSize*1.28);
+ if(ticket.status==='cancelled')y=paragraph(page,'INSCRIÇÃO CANCELADA — QR Code inválido para credenciamento.',font,12,42,y-18,w-84);
+ if(isTest){
+  y=paragraph(page,'Simulação online. Não representa inscrição no evento oficial, não reserva vaga e não dá direito a certificado. Não há comparecimento presencial.',font,12,42,y-21,w-84,17);
+ }else{
+  if(ticket.event.date_confirmed)y=paragraph(page,date(ticket.event.event_date),font,12,42,y-21,w-84);
+  if(ticket.event.venue_confirmed){
+   y=paragraph(page,`${ticket.event.venue}${ticket.event.auditorium?` — ${ticket.event.auditorium}`:''}`,font,12,42,y-12,w-84);
+   y=paragraph(page,ticket.event.address,font,11,42,y-8,w-84);
+  }
+  if(!ticket.event.date_confirmed||!ticket.event.venue_confirmed)y=paragraph(page,'Consulte o site para a confirmação de data e local antes de se deslocar.',font,11,42,y-12,w-84);
+ }
  // Compact layout leaves a full quiet zone around the individual QR.
  const qrY=Math.min(y-194,245);qr(page,ticket.token,(w-170)/2,qrY,170);
  page.drawText(ticket.code,{x:(w-font.widthOfTextAtSize(ticket.code,11))/2,y:qrY-18,size:11,font,color:navy});
- paragraph(page,'Apresente este QR Code e um documento com nome no credenciamento. A equipe confirmará sua identidade. O ingresso é pessoal; guarde este arquivo e o link de recuperação em local seguro.',font,10,42,qrY-48,w-84,14);
+ paragraph(page,isTest?'Use este QR Code apenas para testar a leitura pela equipe autorizada. Guarde o arquivo e o link privado. Este ingresso não permite entrada no evento oficial.':'Apresente este QR Code e um documento com nome no credenciamento. A equipe confirmará sua identidade. O ingresso é pessoal; guarde este arquivo e o link de recuperação em local seguro.',font,10,42,qrY-48,w-84,14);
  paragraph(page,`${origin}/ingresso#${ticket.token}`,font,7,42,75,w-84,10);
  page.drawText('NEXO Governamental — Núcleo Maranhão e Piauí',{x:42,y:30,size:9,font,color:navy});
- pdf.setTitle(`Ingresso ${ticket.code}`);return pdf.save();
+ pdf.setTitle(`${isTest?'Ingresso de teste':'Ingresso'} ${ticket.code}`);
+ pdf.setSubject(isTest?'Demonstração NEXO Governamental — sem validade para o evento oficial e sem direito a certificado.':'Ingresso individual gratuito — NEXO Governamental');return pdf.save();
 }
 export async function certificatePdf(data:CertificateSnapshot,code:string,issuedAt:string,origin:string,preview=false) {
  const {pdf,font}=await document(),page=pdf.addPage([841.89,595.28]),w=page.getWidth();

@@ -42,7 +42,7 @@ describe.sequential('migrations distribuídas para D1', () => {
   it('instala todos os gatilhos com o parser Wrangler e mantém produção fechada', async () => {
     const triggers = await db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name").all<{ name: string }>();
     expect(triggers.results.map(row => row.name)).toEqual(expectedTriggers.sort());
-    expect(expectedTriggers).toHaveLength(16);
+    expect(expectedTriggers).toHaveLength(23);
     expect(await db.prepare('SELECT registration_open,certificates_released,certificate_rules_approved,date_confirmed,venue_confirmed FROM events WHERE id=?')
       .bind('slz-2026').first()).toEqual({ registration_open: 0, certificates_released: 0, certificate_rules_approved: 0, date_confirmed: 0, venue_confirmed: 0 });
   });

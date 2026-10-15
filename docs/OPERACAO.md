@@ -4,6 +4,8 @@ Guia para a equipe NEXO. Comandos de terminal usam PowerShell e devem ser execut
 
 ## 1. Preparar o computador
 
+Para testar no site publicado sem abrir o evento oficial, use o [roteiro de inscrições de teste](TESTES_INSCRICAO.md). O formulário está em `/inscricao?evento=teste-inscricoes`, com evento e capacidade próprios no D1 existente. A administração permite encerrar e anonimizar exclusivamente os testes com confirmação textual e auditoria.
+
 Use Node.js 22, indicado em `.nvmrc`, com npm, e Git. Feche e reabra o terminal depois de instalar ferramentas. Confira:
 
 ```powershell
