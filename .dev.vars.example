@@ -1,0 +1,3 @@
+# Exemplo de nomes; não contém credenciais válidas.
+# Gere .dev.vars privado com o comando do README.
+TOKEN_SECRET=

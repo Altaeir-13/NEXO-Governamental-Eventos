@@ -1,0 +1,13 @@
+name = "nexo-governamental-eventos"
+compatibility_date = "2026-08-01"
+pages_build_output_dir = "dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nexo-eventos"
+database_id = "612ea13a-1f61-462f-8709-fdfa07cdadde"
+migrations_dir = "migrations"
+
+# Previews não recebem o banco de produção, inclusive em upload manual.
+[env.preview]
+d1_databases = []

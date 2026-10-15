@@ -1,0 +1,22 @@
+# Arquitetura e plano de execução
+
+React + TypeScript + Vite, Nunito hospedada localmente, CSS responsivo e acessível. API HTTP em Cloudflare Pages Functions; banco relacional Cloudflare D1, migrations versionadas. Nenhum serviço pago obrigatório. Todos os dados operacionais passam pela API, nunca por uma simulação no navegador.
+
+1. Fundação: configuração, tipos compartilhados, schema e integridade no banco.
+2. Site público: identidade NEXO, dados provisórios explícitos, agenda e convidados aprovados.
+3. Inscrições: validação, transação atômica, idempotência, ingresso individual e PDF.
+4. Administração: autenticação, sessão, permissões, gestão e credenciamento.
+5. Certificados: aprovação institucional, presença, liberação por data, PDF e autenticidade.
+6. Qualidade: testes com SQLite/D1 local, concorrência, build, segurança e operação Cloudflare.
+
+O DESIGN fornecido é referência obrigatória. Corrigimos o contraste indicado no próprio documento, o menu mobile e estados de feedback com texto/ícone e cores institucionais. Dados não confirmados não são apresentados como definitivos. Materiais de conversa não são publicados.
+
+Tokens de ingresso são credenciais de posse: 256 bits aleatórios, somente hashes no banco e compartilhamento pelo fragmento da URL. Recuperação administrativa exige verificação de identidade fora do site e revoga o token anterior. Sessões administrativas usam cookies HttpOnly e hash no banco. Mutações exigem origem correspondente e token CSRF. A capacidade é garantida no banco, inclusive em concorrência.
+
+## Contrato HTTP
+
+JSON com erros `{error: string}`. GET `/api/event?slug=...` retorna `PublicEvent`. POST `/api/register` recebe `{eventId,name,email,institution,course,consent,website,idempotencyKey}` e retorna `{token,code,id}`. POST `/api/ticket` recebe `{token}` e retorna `Ticket`. POST `/api/certificate` recebe `{token}` e retorna `{snapshot,code,issued_at}` após autorização. O navegador gera os PDFs com `shared/pdf.ts`, sob demanda e com dados oficiais, evitando depender de processamento pesado nas Functions do plano gratuito. GET `/api/validate/:code` retorna certificado público mínimo.
+
+POST `/api/admin/login` e GET `/api/admin/session` retornam `AdminSession`. POST `/api/admin/logout`. Demais mutações exigem `X-CSRF-Token`. GET/PUT `/api/admin/event?eventId=...`; GET/POST `/api/admin/events`; GET/POST `/api/admin/speakers?eventId=...`, PUT/DELETE `/api/admin/speakers/:id`; idem schedule. GET `/api/admin/participants?eventId=...&q=...` retorna `{participants}`; PATCH `/api/admin/participants/:id` altera nome/email/institution/course/status/checkedIn/certificateEligible; DELETE anonimiza. POST `/api/admin/participants/:id/recover` exige `{identityVerified:true,reason}` e retorna `{token,code}`. GET `/api/admin/dashboard?eventId=...` retorna métricas; POST `/api/admin/check-in` recebe `{token|code,eventId,confirmIdentity:true}`. GET `/api/admin/export?eventId=...` CSV. POST `/api/admin/certificates` recebe `{registrationIds,action:'issue'|'revoke'}`; GET lista incluindo emissões anteriores invalidadas; POST `/api/admin/certificate-preview` retorna os dados de uma prévia sem validade para renderização local. GET `/api/admin/audit` histórico.
+
+EventSettings e tipos são compartilhados em `shared/types.ts`. Rotas administrativas respeitam o papel `admin` ou `checkin`. Painel envia campos de EventSettings para edição; respostas não retornam segredos. A API decide elegibilidade, abertura, capacidade e confirmação.
