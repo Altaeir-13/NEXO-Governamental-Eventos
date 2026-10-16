@@ -52,6 +52,8 @@ As inscrições começam fechadas. A organização precisa confirmar data, local
 Não há serviço pago obrigatório, pagamento, checkout ou envio automático de e-mail. O plano gratuito tem cotas e pode suspender requisições ao excedê-las; não há garantia de disponibilidade ilimitada. O guia contém os limites e links oficiais consultados.
 
 - [Guia completo de instalação, publicação e operação](docs/OPERACAO.md)
+- [Aplicativo Android/iPhone e credenciamento presencial](docs/PWA_CREDENCIAMENTO.md)
+- [Investigação do fluxo existente e testes do PWA](docs/PWA_INVESTIGACAO.md)
 - [Segurança, privacidade e resposta a incidentes](docs/SEGURANCA.md)
 - [Arquitetura e contrato HTTP](docs/ARCHITECTURE.md)
 - [Conteúdo editorial, fotografias e aprovações](docs/CONTEUDO_EDITORIAL.md)

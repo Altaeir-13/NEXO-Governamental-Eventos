@@ -15,6 +15,8 @@ const dist = resolve(root, 'dist');
 const temporary = resolve(root, '.tmp');
 const port = Number(process.env.NEXO_QA_PORT || 8790);
 const editorialQa = process.env.NEXO_QA_EDITORIAL === '1';
+const pwaQa = process.env.NEXO_QA_PWA === '1';
+let pwaRelease = 0;
 // Synthetic 8×8 navy/teal checkerboard, exclusively a technical image fixture.
 // It is never written to public/ or dist/ and does not depict a person or venue.
 const editorialPattern = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAI0lEQVR4nGOQlA+UlA9sfnWj+dUNZDYDTglMIQgbtwQd7AAAADVZwXkGfusAAAAASUVORK5CYII=', 'base64');
@@ -95,11 +97,18 @@ const email = 'admin-ensaio@example.invalid';
 const password = `Ensaio-Ficticio-${randomBytes(8).toString('hex')}!`;
 await db.prepare('INSERT INTO admin_users(id,email,name,password_hash,role) VALUES (?,?,?,?,?)')
   .bind(randomUUID(), email, 'Equipe fictícia de ensaio', await hashPassword(password), 'admin').run();
-const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.woff': 'font/woff', '.pdf': 'application/pdf', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml; charset=utf-8' };
+const mime = { '.webmanifest': 'application/manifest+json; charset=utf-8', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.woff': 'font/woff', '.pdf': 'application/pdf', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml; charset=utf-8' };
 let sequence = 0;
 const server = createServer(async (incoming, outgoing) => {
   try {
     const url = new URL(incoming.url || '/', `http://127.0.0.1:${port}`);
+    // Test-only release switch, available solely on this disposable loopback server.
+    if (pwaQa && url.pathname === '/__qa/pwa-release' && incoming.method === 'POST') {
+      pwaRelease++;
+      outgoing.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      outgoing.end(JSON.stringify({ release: pwaRelease }));
+      return;
+    }
     if (url.pathname.startsWith('/api/')) {
       const headers = new Headers();
       for (const [key, value] of Object.entries(incoming.headers)) if (value !== undefined) headers.set(key, Array.isArray(value) ? value.join(', ') : value);
@@ -128,8 +137,11 @@ const server = createServer(async (incoming, outgoing) => {
       if (extname(pathname)) { outgoing.writeHead(404); outgoing.end('Arquivo não encontrado.'); return; }
       target = resolve(dist, 'index.html');
     }
-    const data = await readFile(target);
-    outgoing.writeHead(200, { 'Content-Type': mime[extname(target)] || 'application/octet-stream', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
+    let data = await readFile(target);
+    if (pwaQa && pathname === '/sw.js' && pwaRelease) data = Buffer.from(data.toString('utf8').replace(/nexo-public-([a-f0-9]{20})/, `nexo-public-$1-qa${pwaRelease}`));
+    // Match production cache policy for PWA QA while keeping all documents private.
+    const publicStatic = pathname.startsWith('/assets/') || pathname.startsWith('/icons/') || ['/manifest.webmanifest', '/offline.html', '/favicon.svg'].includes(pathname);
+    outgoing.writeHead(200, { 'Content-Type': mime[extname(target)] || 'application/octet-stream', 'Cache-Control': publicStatic ? 'public, max-age=0' : pathname === '/sw.js' ? 'no-cache' : 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
     outgoing.end(incoming.method === 'HEAD' ? undefined : data);
   } catch (error) {
     console.error('NEXO_QA_REQUEST_ERROR', error instanceof Error ? error.name : 'unknown');

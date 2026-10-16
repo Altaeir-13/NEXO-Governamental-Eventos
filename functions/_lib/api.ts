@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { EventSettings, Participant, Speaker, Ticket } from '../../shared/types';
+import type { EventSettings, Participant, RecentCheckin, Speaker, Ticket } from '../../shared/types';
 import { ApiError, authenticate, body, equal, id, keyed, now, originCheck, randomToken, rateLimit, sessionCookie, sha, verifyPassword, type Auth, type Env } from './security';
 import { email, eventSchema, httpsUrlSchema, imageUrlSchema, parse, participantSchema, registerSchema, scheduleSchema, speakerSchema, venueVisualUrlSchema, wordCount } from './validation';
 import type { CertificateSnapshot } from '../../shared/pdf';
@@ -26,10 +26,11 @@ function publicSpeaker(speaker:Speaker):Speaker {
  if(!httpsUrlSchema.safeParse(safe.social_url).success) safe.social_url='';
  return safe;
 }
-const participantSelect='SELECT r.id,r.participant_id,p.name,p.email,r.profile,p.institution,p.course,e.is_test,r.code,r.status,r.created_at,c.checked_in_at,r.certificate_eligible,x.code certificate_code,x.status certificate_status FROM registrations r JOIN participants p ON p.id=r.participant_id JOIN events e ON e.id=r.event_id LEFT JOIN checkins c ON c.registration_id=r.id LEFT JOIN certificates x ON x.registration_id=r.id';
+const participantSelect='SELECT r.id,r.participant_id,p.name,p.email,r.profile,p.institution,p.course,e.is_test,r.code,r.status,r.created_at,c.checked_in_at,u.name checked_in_by,r.certificate_eligible,x.code certificate_code,x.status certificate_status FROM registrations r JOIN participants p ON p.id=r.participant_id JOIN events e ON e.id=r.event_id LEFT JOIN checkins c ON c.registration_id=r.id LEFT JOIN admin_users u ON u.id=c.actor_id LEFT JOIN certificates x ON x.registration_id=r.id';
 async function getParticipant(env:Env,registrationId:string) { return required(await one<Participant>(env,`${participantSelect} WHERE r.id=?`,registrationId)); }
 const audit=(env:Env,actor:Auth,action:string,target:string,details:Record<string,unknown>={})=>sql(env,'INSERT INTO audit_logs(id,actor_id,action,target_id,details) VALUES (?,?,?,?,?)',id(),actor.user.id,action,target,JSON.stringify(details));
 function isAdmin(auth:Auth) { if(auth.user.role!=='admin') throw new ApiError(403,'Esta ação exige um administrador.'); }
+function isCheckinOperator(auth:Auth) { if(!['admin','checkin'].includes(auth.user.role)) throw new ApiError(403,'Esta ação exige acesso autorizado ao credenciamento.'); }
 function eventIdFrom(url:URL) { return required(url.searchParams.get('eventId'),'Informe o evento.'); }
 function registrationKindFilter(url:URL) {
  const kind=parse(z.enum(['all','test','official']),url.searchParams.get('kind')||'all');
@@ -250,14 +251,53 @@ async function recover(request:Request,env:Env,auth:Auth,registrationId:string) 
  return json({token,code:p.code});
 }
 
+const checkinCredentialSchema=z.object({
+ eventId:z.string().trim().min(1).max(100),
+ token:z.string().regex(/^[a-f0-9]{64}$/,'QR Code inválido.').optional(),
+ code:z.string().trim().min(1).max(60).transform(value=>value.toUpperCase()).optional()
+});
+type CheckinCredential=z.infer<typeof checkinCredentialSchema>;
+const oneCredential=(data:CheckinCredential)=>!!data.token!==!!data.code;
+async function checkinFilter(data:CheckinCredential) {
+ // Bind tokens only as hashes. Neither credentials nor ticket responses enter URLs or logs.
+ return data.token
+  ? {query:'r.event_id=? AND t.token_hash=?',args:[data.eventId,await sha(data.token)]}
+  : {query:'r.event_id=? AND r.code=?',args:[data.eventId,data.code!]};
+}
+const checkinTicketJoin=' JOIN tickets t ON t.registration_id=r.id';
+const visibleCheckinTicket="(t.revoked_at IS NULL OR r.status='cancelled')";
+
+async function lookupCheckin(request:Request,env:Env,auth:Auth) {
+ isCheckinOperator(auth);
+ const data=parse(checkinCredentialSchema.strict().refine(oneCredential,'Informe um token ou código.'),await body(request));
+ await rateLimit(env,request,'checkin-lookup',300,60,auth.user.id);
+ const filter=await checkinFilter(data);
+ const participant=await one<Participant>(env,`${participantSelect}${checkinTicketJoin} WHERE ${filter.query} AND ${visibleCheckinTicket}`, ...filter.args);
+ if(!participant) throw new ApiError(404,'Ingresso inexistente ou revogado.');
+ // This authenticated preview never records attendance, returns the private token,
+ // or uses the participant-facing ticket endpoint.
+ return json({participant});
+}
+
 async function checkIn(request:Request,env:Env,auth:Auth) {
- const data=parse(z.object({eventId:z.string(),token:z.string().optional(),code:z.string().max(60).optional(),confirmIdentity:z.literal(true)}).refine(d=>!!d.token!==!!d.code,'Informe um token ou código.'),await body(request));
- await rateLimit(env,request,'checkin',200,60);
- const registration=data.token?await one<{id:string;status:string}>(env,'SELECT r.id,r.status FROM registrations r JOIN tickets t ON t.registration_id=r.id WHERE t.token_hash=? AND t.revoked_at IS NULL AND r.event_id=?',await sha(data.token),data.eventId):await one<{id:string;status:string}>(env,'SELECT id,status FROM registrations WHERE code=? AND event_id=?',data.code?.trim().toUpperCase(),data.eventId);
- if(!registration) throw new ApiError(404,'Ingresso inexistente ou revogado.');
- if(registration.status!=='active') throw new ApiError(409,'Ingresso cancelado.');
- const result=await env.DB.batch([sql(env,'INSERT INTO checkins(registration_id,actor_id) VALUES (?,?) ON CONFLICT(registration_id) DO NOTHING',registration.id,auth.user.id),audit(env,auth,'checkin.confirm',registration.id)]);
- return json({participant:await getParticipant(env,registration.id),alreadyCheckedIn:result[0].meta.changes===0});
+ isCheckinOperator(auth);
+ const data=parse(checkinCredentialSchema.extend({confirmIdentity:z.literal(true)}).strict().refine(oneCredential,'Informe um token ou código.'),await body(request));
+ await rateLimit(env,request,'checkin',200,60,auth.user.id);
+ const filter=await checkinFilter(data);
+ const eligible=`${filter.query} AND r.status='active' AND t.revoked_at IS NULL`;
+ // D1 serializes the whole batch. Validate the credential at INSERT time so
+ // cancellation/recovery cannot race a stale preflight read. The existing PK
+ // makes retries and simultaneous operators preserve the first actor/time.
+ const result=await env.DB.batch([
+  sql(env,`INSERT INTO checkins(registration_id,actor_id) SELECT r.id,? FROM registrations r${checkinTicketJoin} WHERE ${eligible} ON CONFLICT(registration_id) DO NOTHING`,auth.user.id,...filter.args),
+  sql(env,`INSERT INTO audit_logs(id,actor_id,action,target_id) SELECT ?,?,'checkin.confirm',r.id FROM registrations r${checkinTicketJoin} WHERE ${eligible} AND changes()=1`,id(),auth.user.id,...filter.args),
+  sql(env,`${participantSelect}${checkinTicketJoin} WHERE ${filter.query} AND ${visibleCheckinTicket}`,...filter.args)
+ ]);
+ const participant=result[2].results[0] as unknown as Participant|undefined;
+ if(!participant) throw new ApiError(404,'Ingresso inexistente ou revogado.');
+ if(participant.status!=='active') throw new ApiError(409,'Ingresso cancelado.');
+ if(!participant.checked_in_at) throw new ApiError(409,'A presença não foi confirmada. Consulte novamente o ingresso.');
+ return json({participant,alreadyCheckedIn:result[0].meta.changes===0});
 }
 
 async function issueCertificates(request:Request,env:Env,auth:Auth) {
@@ -328,6 +368,7 @@ async function routes(request:Request,env:Env):Promise<Response> {
  const auth=await authenticate(request,env);
  if(path==='/api/admin/session' && method==='GET') return json({user:auth.user,csrf:auth.csrf});
  if(path==='/api/admin/logout' && method==='POST') { await sql(env,'DELETE FROM sessions WHERE token_hash=?',auth.tokenHash).run(); return json({ok:true},200,{'Set-Cookie':sessionCookie(request,'',true)}); }
+ if(path==='/api/admin/check-in/lookup' && method==='POST') return lookupCheckin(request,env,auth);
  if(path==='/api/admin/check-in' && method==='POST') return checkIn(request,env,auth);
  if(path==='/api/admin/test-data/cleanup' && method==='POST') return cleanupTestData(request,env,auth);
  if(path==='/api/admin/events' && method==='GET') return json({events:await rows(env,'SELECT * FROM events ORDER BY event_date DESC')});
@@ -335,9 +376,14 @@ async function routes(request:Request,env:Env):Promise<Response> {
  if(path==='/api/admin/event' && method==='GET') return json({event:await getEvent(env,eventIdFrom(url))});
  if(path==='/api/admin/event' && method==='PUT') return saveEvent(request,env,auth,url);
  if(path==='/api/admin/dashboard' && method==='GET') {
+  isCheckinOperator(auth);
   const event=await getEvent(env,eventIdFrom(url));
-  const counts=await one<{total:number;active:number;cancelled:number;checkedIn:number;eligible:number;certificates:number}>(env,"SELECT COUNT(*) total,COALESCE(SUM(r.status='active'),0) active,COALESCE(SUM(r.status='cancelled'),0) cancelled,COALESCE(SUM(r.status='active' AND c.registration_id IS NOT NULL),0) checkedIn,COALESCE(SUM(r.status='active' AND r.certificate_eligible=1 AND c.registration_id IS NOT NULL),0) eligible,COALESCE(SUM(x.status='issued'),0) certificates FROM registrations r LEFT JOIN checkins c ON c.registration_id=r.id LEFT JOIN certificates x ON x.registration_id=r.id WHERE r.event_id=?",event.id);
-  return json({...counts,remaining:event.capacity-event.active_count,absent:(counts?.active||0)-(counts?.checkedIn||0),certificatesIssued:counts?.certificates||0,occupancy:Math.round(event.active_count/event.capacity*100)});
+  const [counts,recent]=await env.DB.batch([
+   sql(env,"SELECT COUNT(*) total,COALESCE(SUM(r.status='active'),0) active,COALESCE(SUM(r.status='cancelled'),0) cancelled,COALESCE(SUM(r.status='active' AND c.registration_id IS NOT NULL),0) checkedIn,COALESCE(SUM(r.status='active' AND r.certificate_eligible=1 AND c.registration_id IS NOT NULL),0) eligible,COALESCE(SUM(x.status='issued'),0) certificates FROM registrations r LEFT JOIN checkins c ON c.registration_id=r.id LEFT JOIN certificates x ON x.registration_id=r.id WHERE r.event_id=?",event.id),
+   sql(env,"SELECT r.id,p.name,r.code,c.checked_in_at,u.name checked_in_by FROM checkins c JOIN registrations r ON r.id=c.registration_id JOIN participants p ON p.id=r.participant_id JOIN admin_users u ON u.id=c.actor_id WHERE r.event_id=? AND r.status='active' ORDER BY c.checked_in_at DESC,r.id LIMIT 10",event.id)
+  ]);
+  const metrics=counts.results[0] as unknown as {total:number;active:number;cancelled:number;checkedIn:number;eligible:number;certificates:number};
+  return json({...metrics,remaining:event.capacity-event.active_count,absent:metrics.active-metrics.checkedIn,certificatesIssued:metrics.certificates,occupancy:Math.round(event.active_count/event.capacity*100),attendancePercentage:metrics.active?Math.round(metrics.checkedIn/metrics.active*100):0,recentCheckins:recent.results as unknown as RecentCheckin[],updatedAt:now()});
  }
  if(path==='/api/admin/participants' && method==='GET') {
   const q=(url.searchParams.get('q')||'').slice(0,150),eventId=eventIdFrom(url);

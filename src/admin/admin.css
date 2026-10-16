@@ -32,6 +32,33 @@
 .adm-test-banner p{font-size:12px;line-height:1.8;margin:5px 0 10px;color:#3f5266}
 .adm-test-banner a{display:inline-flex;align-items:center;gap:7px;min-height:32px;font-size:12px;font-weight:900;text-underline-offset:3px}
 .adm-pill.adm-test-pill{background:#e4f3ed;border-color:#88b5a8;color:#205646}
+.adm-checkin-panel .adm-camera-actions .adm-button{min-height:52px;font-size:15px}
+.adm-checkin-panel .adm-camera-select{margin:18px 0;max-width:100%}
+.adm-checkin-panel input,.adm-checkin-panel select,.adm-checkin-dialog input,.adm-reception-dashboard select{font-size:16px!important}
+.adm-checkin-dialog .adm-checkbox{font-size:15px;line-height:1.6}
+.adm-checkin-dialog .adm-button{min-height:48px;font-size:14px;white-space:normal}
+.adm-checkin-dialog .adm-notice{font-size:14px;line-height:1.7}
+.adm-retry-lookup{margin:0 0 20px}
+.adm-reception-help,.adm-reception-updated{font-size:12px;line-height:1.8;color:#4a5874;margin:18px 0}
+.adm-reception-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.adm-reception-metrics>div{display:flex;flex-direction:column;gap:5px;background:var(--adm-ice);padding:20px 16px;border-radius:18px;border:1px solid var(--adm-line)}
+.adm-reception-metrics strong{font-size:32px;font-weight:900;line-height:1.2}
+.adm-reception-metrics span{font-size:13px;font-weight:800}
+.adm-reception-metrics small{font-size:11px;color:#4a5874}
+.adm-reception-dashboard h3{font-size:18px;margin:24px 0 12px}
+.adm-reception-dashboard>p{font-size:13px;line-height:1.8}
+.adm-reception-recent,.adm-reception-participants{padding:0;list-style:none;margin:0}
+.adm-reception-recent{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.adm-reception-recent li{display:flex;flex-direction:column;gap:5px;padding:14px 16px;border-left:3px solid #24685f;background:#f5fafa;border-radius:0 12px 12px 0;overflow-wrap:anywhere}
+.adm-reception-recent strong{font-size:14px}.adm-reception-recent span,.adm-reception-recent small{font-size:12px}
+.adm-reception-list-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:24px 0 16px}
+.adm-reception-list-heading h3{margin:0}.adm-reception-list-heading .adm-field{min-width:200px}
+.adm-reception-participants li{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:16px 0;border-bottom:1px solid var(--adm-line);overflow-wrap:anywhere}
+.adm-reception-participants li>div{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:14px}
+.adm-reception-participants li>div:last-child{align-items:flex-end;text-align:right}
+.adm-reception-participants code,.adm-reception-participants small{font-size:12px}
+.adm-reception-pagination{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:20px;font-size:12px}
+@media(max-width:600px){.adm-reception-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.adm-reception-metrics>div{padding:16px 12px}.adm-reception-metrics strong{font-size:28px}.adm-reception-metrics span{font-size:12px}.adm-reception-recent{grid-template-columns:1fr}.adm-reception-list-heading{align-items:stretch;flex-direction:column}.adm-reception-participants li{align-items:flex-start;flex-direction:column;gap:10px}.adm-reception-participants li>div:last-child{align-items:flex-start;text-align:left}.adm-reception-pagination{flex-wrap:wrap}.adm-reception-pagination .adm-button{font-size:12px;padding:10px 12px}.adm-checkin-panel .adm-camera{height:min(60vw,280px)}.adm-checkin-panel .adm-camera-actions small{font-size:12px;line-height:1.7}.adm-checkin-panel .adm-section-title p{font-size:14px}.adm-checkin-panel .adm-manual-search>.adm-button{font-size:14px;min-height:48px}}
 .adm-page-heading p>.adm-pill{margin-right:5px;vertical-align:middle}
 .adm-participant-summary{display:flex;gap:12px 24px;flex-wrap:wrap;margin:0 0 20px;padding:15px 18px;background:var(--adm-ice);border:1px solid var(--adm-line);border-radius:14px;font-size:12px}
 .adm-participant-summary strong{font-size:17px;font-weight:900;margin-right:4px}

@@ -7,6 +7,7 @@ import '@fontsource/nunito/latin-600.css';
 import '@fontsource/nunito/latin-700.css';
 import '@fontsource/nunito/latin-800.css';
 import App from './App';
+import { PwaControls } from './pwa/PwaControls';
 import './styles.css';
 
 class ErrorBoundary extends React.Component<{children: React.ReactNode}, {failed: boolean}> {
@@ -14,4 +15,4 @@ class ErrorBoundary extends React.Component<{children: React.ReactNode}, {failed
  static getDerivedStateFromError() { return { failed: true }; }
  render() { return this.state.failed ? <main className="container page-content"><h1>Precisamos recarregar esta página.</h1><p>Ocorreu uma falha na interface. Você pode tentar novamente.</p><button onClick={() => location.reload()}>Recarregar</button></main> : this.props.children; }
 }
-ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><ErrorBoundary><BrowserRouter><App /></BrowserRouter></ErrorBoundary></React.StrictMode>);
+ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><ErrorBoundary><BrowserRouter><App /><PwaControls /></BrowserRouter></ErrorBoundary></React.StrictMode>);

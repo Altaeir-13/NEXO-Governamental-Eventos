@@ -2,6 +2,8 @@
 
 Guia para a equipe NEXO. Comandos de terminal usam PowerShell e devem ser executados na pasta do projeto. Textos entre `<...>` são valores a substituir; não copie os sinais `<` e `>` para os comandos. Documentação Cloudflare consultada em 15/10/2026.
 
+Para a versão instalável e a recepção pelo celular, consulte [Aplicativo e credenciamento presencial](PWA_CREDENCIAMENTO.md). Esse guia detalha instalação Android/iPhone, câmera, contas `checkin`, acompanhamento, atualização e contingência humana sem sincronização offline. As evidências específicas da atualização ficam em [PWA_VALIDACAO.md](PWA_VALIDACAO.md).
+
 ## 1. Preparar o computador
 
 Para testar no site publicado sem abrir o evento oficial, use o [roteiro de inscrições de teste](TESTES_INSCRICAO.md). O formulário está em `/inscricao?evento=teste-inscricoes`, com evento e capacidade próprios no D1 existente. A administração permite encerrar e anonimizar exclusivamente os testes com confirmação textual e auditoria.

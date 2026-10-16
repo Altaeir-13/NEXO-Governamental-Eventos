@@ -6,7 +6,7 @@ import { Miniflare } from 'miniflare';
 import { unstable_splitSqlQuery } from 'wrangler';
 import { PDFDocument } from 'pdf-lib';
 import { certificatePdf, ticketPdf, type CertificateSnapshot } from '../shared/pdf';
-import type { EventSettings, Participant, PublicEvent, Speaker, Ticket } from '../shared/types';
+import type { CheckinResult, Dashboard, EventSettings, Participant, PublicEvent, Speaker, Ticket } from '../shared/types';
 import { handleApi } from '../functions/_lib/api';
 import { hashPassword, type Env } from '../functions/_lib/security';
 
@@ -512,6 +512,154 @@ describe.sequential('plataforma integrada com D1 isolado', () => {
     expect(repeated.status).toBe(200);
     expect(await repeated.json()).toMatchObject({ alreadyCheckedIn: true });
     expect(await db.prepare('SELECT count(*) AS total FROM checkins').first('total')).toBe(1);
+  });
+
+  it('consulta o QR somente com sessão, CSRF e evento correto sem registrar presença ou retornar o token', async () => {
+    const registration = await register();
+    const payload = { eventId: EVENT, token: registration.token };
+    expect((await request('/admin/check-in/lookup', 'POST', payload)).status).toBe(401);
+    const operator = await login('checkin');
+    expect((await request('/admin/check-in/lookup', 'POST', payload, { ...operator, csrf: 'incorreto' })).status).toBe(403);
+    expect((await request('/admin/check-in/lookup', 'POST', { ...payload, eventId: 'outro-evento' }, operator)).status).toBe(404);
+    expect((await request('/admin/check-in/lookup', 'POST', { ...payload, token: 'QR inventado' }, operator)).status).toBe(400);
+    const response = await request('/admin/check-in/lookup', 'POST', payload, operator);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    const preview = await response.text();
+    expect(preview).not.toContain(registration.token);
+    expect(JSON.parse(preview)).toMatchObject({ participant: { id: registration.id, code: registration.code, status: 'active', checked_in_at: null, checked_in_by: null } });
+    expect(await db.prepare('SELECT count(*) AS total FROM checkins').first('total')).toBe(0);
+    expect(await db.prepare("SELECT count(*) AS total FROM audit_logs WHERE action='checkin.confirm'").first('total')).toBe(0);
+  });
+
+  it('oferece consulta e confirmação por código e busca por nome sem depender da câmera', async () => {
+    const registration = await register({ name: 'Participante Manual Fictício' });
+    const operator = await login('checkin');
+    const search = await request(`/admin/participants?eventId=${EVENT}&q=Manual`, 'GET', undefined, operator);
+    expect(search.status).toBe(200);
+    expect(await search.json()).toMatchObject({ participants: [{ id: registration.id, checked_in_at: null }] });
+    const payload = { eventId: EVENT, code: ` ${registration.code.toLowerCase()} ` };
+    const lookup = await request('/admin/check-in/lookup', 'POST', payload, operator);
+    expect(lookup.status).toBe(200);
+    expect(await lookup.json()).toMatchObject({ participant: { id: registration.id, name: 'Participante Manual Fictício' } });
+    const result = await request('/admin/check-in', 'POST', { ...payload, confirmIdentity: true }, operator);
+    expect(result.status).toBe(200);
+    expect(await result.json()).toMatchObject({ alreadyCheckedIn: false, participant: { checked_in_by: 'Operador fictício checkin' } });
+    const reopened = await request('/admin/check-in/lookup', 'POST', payload, await login('checkin'));
+    expect(await reopened.json()).toMatchObject({ participant: { id: registration.id, checked_in_at: expect.any(String), checked_in_by: 'Operador fictício checkin' } });
+  });
+
+  it('mantém apenas a primeira entrada, horário, operador e auditoria com dois operadores simultâneos e repetição após resposta perdida', async () => {
+    const registration = await register();
+    const admin = await login();
+    const operator = await login('checkin');
+    const payload = { eventId: EVENT, token: registration.token, confirmIdentity: true };
+    const responses = await Promise.all([request('/admin/check-in', 'POST', payload, admin), request('/admin/check-in', 'POST', payload, operator)]);
+    expect(responses.map(response => response.status)).toEqual([200, 200]);
+    const results = await Promise.all(responses.map(response => response.json() as Promise<CheckinResult>));
+    expect(results.filter(result => !result.alreadyCheckedIn)).toHaveLength(1);
+    expect(results.filter(result => result.alreadyCheckedIn)).toHaveLength(1);
+    const original = await db.prepare('SELECT checked_in_at,actor_id FROM checkins WHERE registration_id=?').bind(registration.id).first();
+    const retried = await request('/admin/check-in', 'POST', payload, operator);
+    expect(retried.status).toBe(200);
+    expect(await retried.json()).toMatchObject({ alreadyCheckedIn: true, participant: { checked_in_at: original!.checked_in_at } });
+    expect(await db.prepare('SELECT checked_in_at,actor_id FROM checkins WHERE registration_id=?').bind(registration.id).first()).toEqual(original);
+    expect(await db.prepare('SELECT count(*) AS total FROM checkins').first('total')).toBe(1);
+    expect(await db.prepare("SELECT count(*) AS total FROM audit_logs WHERE action='checkin.confirm' AND target_id=?").bind(registration.id).first('total')).toBe(1);
+    const audit = await db.prepare("SELECT actor_id,details FROM audit_logs WHERE action='checkin.confirm'").first<{ actor_id: string; details: string }>();
+    expect(audit!.actor_id).toBe(original!.actor_id);
+    expect(audit!.details).not.toContain(registration.token);
+  });
+
+  it('informa ingresso cancelado na consulta e impede presença por token ou código', async () => {
+    const registration = await register();
+    const admin = await login();
+    const operator = await login('checkin');
+    expect((await request(`/admin/participants/${registration.id}`, 'PATCH', { status: 'cancelled' }, admin)).status).toBe(200);
+    for (const credential of [{ token: registration.token }, { code: registration.code }]) {
+      const lookup = await request('/admin/check-in/lookup', 'POST', { eventId: EVENT, ...credential }, operator);
+      expect(lookup.status).toBe(200);
+      expect(await lookup.json()).toMatchObject({ participant: { status: 'cancelled', checked_in_at: null } });
+      expect((await request('/admin/check-in', 'POST', { eventId: EVENT, ...credential, confirmIdentity: true }, operator)).status).toBe(409);
+    }
+    expect(await db.prepare('SELECT count(*) AS total FROM checkins').first('total')).toBe(0);
+    expect(await db.prepare("SELECT count(*) AS total FROM audit_logs WHERE action='checkin.confirm'").first('total')).toBe(0);
+  });
+
+  it.each(['cancelled', 'recovered'] as const)('revalida atomicamente o QR se o ingresso for %s antes da escrita', async mutation => {
+    const registration = await register();
+    const operator = await login('checkin');
+    let preparingCheckin = false;
+    let interleaved = false;
+    const concurrentDb = new Proxy(db, {
+      get(target, property) {
+        if (property === 'prepare') return (query: string) => {
+          if (query.startsWith('INSERT INTO checkins')) preparingCheckin = true;
+          return target.prepare(query);
+        };
+        if (property === 'batch') return async (statements: D1PreparedStatement[]) => {
+          if (preparingCheckin) {
+            preparingCheckin = false;
+            interleaved = true;
+            if (mutation === 'cancelled') await db.prepare("UPDATE registrations SET status='cancelled' WHERE id=?").bind(registration.id).run();
+            else await db.prepare('UPDATE tickets SET token_hash=? WHERE registration_id=?').bind('0'.repeat(64), registration.id).run();
+          }
+          return target.batch(statements);
+        };
+        const value = Reflect.get(target, property);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const response = await handleApi(new Request(`${ORIGIN}/api/admin/check-in`, {
+      method: 'POST', headers: { Origin: ORIGIN, 'Content-Type': 'application/json', Cookie: operator.cookie, 'X-CSRF-Token': operator.csrf },
+      body: JSON.stringify({ eventId: EVENT, token: registration.token, confirmIdentity: true }),
+    }), { ...env, DB: concurrentDb });
+    expect(interleaved).toBe(true);
+    expect(response.status).toBe(mutation === 'cancelled' ? 409 : 404);
+    expect(await db.prepare('SELECT count(*) AS total FROM checkins').first('total')).toBe(0);
+    expect(await db.prepare("SELECT count(*) AS total FROM audit_logs WHERE action='checkin.confirm'").first('total')).toBe(0);
+  });
+
+  it('calcula comparecimento e lista horários recentes no servidor incluindo atualizações de outro operador', async () => {
+    const first = await register({ name: 'Pessoa já presente' });
+    const second = await register({ name: 'Pessoa aguardada' });
+    const cancelled = await register({ name: 'Pessoa cancelada' });
+    const admin = await login();
+    const operator = await login('checkin');
+    await request(`/admin/participants/${cancelled.id}`, 'PATCH', { status: 'cancelled' }, admin);
+    await attend(first, operator);
+    const response = await request(`/admin/dashboard?eventId=${EVENT}`, 'GET', undefined, operator);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    const snapshot = await response.json() as Dashboard;
+    expect(snapshot).toMatchObject({ total: 3, active: 2, cancelled: 1, checkedIn: 1, absent: 1, attendancePercentage: 50, recentCheckins: [{ id: first.id, name: 'Pessoa já presente', code: first.code, checked_in_at: expect.any(String), checked_in_by: 'Operador fictício checkin' }], updatedAt: expect.any(String) });
+    expect(JSON.stringify(snapshot)).not.toContain(first.token);
+    expect(JSON.stringify(snapshot)).not.toContain('@example.invalid');
+    await attend(second, admin);
+    const updated = await request(`/admin/dashboard?eventId=${EVENT}`, 'GET', undefined, operator);
+    expect(await updated.json()).toMatchObject({ checkedIn: 2, absent: 0, attendancePercentage: 100, recentCheckins: expect.arrayContaining([{ id: second.id, name: 'Pessoa aguardada', code: second.code, checked_in_at: expect.any(String), checked_in_by: 'Operador fictício admin' }]) });
+  });
+
+  it('reverte presença se o banco falhar no meio da transação e permite repetir com segurança', async () => {
+    const registration = await register();
+    const operator = await login('checkin');
+    const payload = { eventId: EVENT, token: registration.token, confirmIdentity: true };
+    await db.prepare("CREATE TRIGGER qa_fail_checkin_audit BEFORE INSERT ON audit_logs WHEN NEW.action='checkin.confirm' BEGIN SELECT RAISE(ABORT,'SIMULATED_OUTAGE'); END").run();
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const response = await request('/admin/check-in', 'POST', payload, operator);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ error: expect.any(String) });
+      expect(await db.prepare('SELECT count(*) AS total FROM checkins').first('total')).toBe(0);
+      expect(await db.prepare("SELECT count(*) AS total FROM audit_logs WHERE action='checkin.confirm'").first('total')).toBe(0);
+      expect(JSON.stringify(logged.mock.calls)).not.toContain(registration.token);
+    } finally {
+      await db.prepare('DROP TRIGGER qa_fail_checkin_audit').run();
+      logged.mockRestore();
+    }
+    const retry = await request('/admin/check-in', 'POST', payload, operator);
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toMatchObject({ alreadyCheckedIn: false, participant: { checked_in_at: expect.any(String) } });
   });
 
   it('protege painel, permissões de operador e CSRF', async () => {

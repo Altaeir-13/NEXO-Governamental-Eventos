@@ -14,6 +14,10 @@ export interface Speaker {
 }
 export interface ScheduleItem { id: string; event_id: string; title: string; description: string; start_time: string | null; end_time: string | null; time_label: string; speaker_id: string | null; display_order: number; published: number; special: number }
 export interface PublicEvent { event: EventSettings; schedule: ScheduleItem[]; speakers: Speaker[]; remaining: number }
-export interface Participant { id: string; participant_id: string; name: string; email: string; profile: string; institution: string; course: string; is_test: number; code: string; status: string; created_at: string; checked_in_at: string | null; certificate_eligible: number; certificate_code: string | null; certificate_status: string | null }
+export interface Participant { id: string; participant_id: string; name: string; email: string; profile: string; institution: string; course: string; is_test: number; code: string; status: string; created_at: string; checked_in_at: string | null; checked_in_by?: string | null; certificate_eligible: number; certificate_code: string | null; certificate_status: string | null }
+export interface CheckinLookup { participant: Participant }
+export interface CheckinResult extends CheckinLookup { alreadyCheckedIn: boolean }
+export interface RecentCheckin { id: string; name: string; code: string; checked_in_at: string; checked_in_by: string }
+export interface Dashboard { total: number; active: number; cancelled: number; remaining: number; checkedIn: number; absent: number; eligible: number; certificates: number; certificatesIssued: number; occupancy: number; attendancePercentage: number; recentCheckins: RecentCheckin[]; updatedAt: string }
 export interface Ticket { id: string; code: string; token: string; name: string; status: string; checked_in_at: string | null; event: EventSettings; certificate: { code: string; status: string } | null }
 export interface AdminSession { user: { id: string; email: string; name: string; role: string }; csrf: string }
