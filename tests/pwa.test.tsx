@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PwaControls } from '../src/pwa/PwaControls';
 
 const origin = 'https://nexo.test';
-const allowlist = ['/offline.html', '/manifest.webmanifest', '/favicon.svg', '/icons/icon-192.png', '/assets/app-test.js', '/assets/style-test.css'];
+const allowlist = ['/offline', '/manifest.webmanifest', '/favicon.svg', '/icons/icon-192.png', '/assets/app-test.js', '/assets/style-test.css'];
 const worker = readFileSync(new URL('../src/pwa/service-worker.js', import.meta.url), 'utf8').replace('__CACHE_VERSION__', 'test').replace('__PUBLIC_ASSETS__', JSON.stringify(allowlist));
 type WorkerRequest = { url: string; method: string; mode: string };
 
@@ -25,8 +25,9 @@ function harness() {
  };
  const fetch = vi.fn(async (request: Request | WorkerRequest) => {
   const path = new URL(request.url).pathname;
-  const type = path.endsWith('.html') ? 'text/html' : path.endsWith('.webmanifest') ? 'application/manifest+json' : path.endsWith('.js') ? 'application/javascript' : path.endsWith('.css') ? 'text/css' : 'image/png';
-  return new Response(path === '/offline.html' ? '<h1>Sem conexão</h1>' : 'public static file', { headers: { 'Content-Type': type } });
+  if (path === '/offline.html') return new Response(null, { status: 308, headers: { Location: '/offline' } });
+  const type = path === '/offline' ? 'text/html' : path.endsWith('.webmanifest') ? 'application/manifest+json' : path.endsWith('.js') ? 'application/javascript' : path.endsWith('.css') ? 'text/css' : 'image/png';
+  return new Response(path === '/offline' ? '<h1>Sem conexão</h1>' : 'public static file', { headers: { 'Content-Type': type } });
  });
  const skipWaiting = vi.fn(); const claim = vi.fn();
  runInNewContext(worker, { self: { location: { origin }, addEventListener: (name: string, listener: (event: unknown) => void) => listeners.set(name, listener), skipWaiting, clients: { claim } }, caches, fetch, Request, Response, URL });
@@ -75,6 +76,13 @@ describe('PWA: cache restrito, privacidade e falhas de conexão', () => {
   sw.fetch.mockClear();
   const response = await sw.request('/assets/app-test.js');
   expect(response?.status).toBe(200); expect(sw.fetch).not.toHaveBeenCalled();
+ });
+ it('precacheia o caminho canônico sem depender do redirect HTML da Cloudflare', async () => {
+  const sw = harness(); await sw.lifecycle('install');
+  expect(sw.fetch.mock.calls.some(([request]) => new URL(request.url).pathname === '/offline')).toBe(true);
+  expect(sw.fetch.mock.calls.some(([request]) => new URL(request.url).pathname === '/offline.html')).toBe(false);
+  expect(sw.request('/offline.html')).toBeUndefined();
+  expect(sw.stores.get('nexo-public-test')!.has(`${origin}/offline`)).toBe(true);
  });
  it.each([
   '/api/event', '/api/admin/check-in', '/api/admin/session', '/api/ticket?token=secret', '/api/certificate/secret.pdf',

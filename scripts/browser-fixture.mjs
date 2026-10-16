@@ -102,6 +102,13 @@ let sequence = 0;
 const server = createServer(async (incoming, outgoing) => {
   try {
     const url = new URL(incoming.url || '/', `http://127.0.0.1:${port}`);
+    // Reproduce Cloudflare Pages' canonical HTML redirect so PWA precaching
+    // cannot accidentally depend on a URL production serves with HTTP 308.
+    if (url.pathname === '/offline.html' && ['GET', 'HEAD'].includes(incoming.method || 'GET')) {
+      outgoing.writeHead(308, { Location: '/offline', 'Cache-Control': 'no-cache' });
+      outgoing.end();
+      return;
+    }
     // Test-only release switch, available solely on this disposable loopback server.
     if (pwaQa && url.pathname === '/__qa/pwa-release' && incoming.method === 'POST') {
       pwaRelease++;
@@ -128,7 +135,7 @@ const server = createServer(async (incoming, outgoing) => {
       return;
     }
     const pathname = decodeURIComponent(url.pathname);
-    let target = resolve(dist, `.${pathname}`);
+    let target = resolve(dist, `.${pathname === '/offline' ? '/offline.html' : pathname}`);
     if (target !== dist && !target.startsWith(dist + sep)) { outgoing.writeHead(403); outgoing.end(); return; }
     let exists = await stat(target).catch(() => null);
     if (exists?.isDirectory()) target = resolve(target, 'index.html');
@@ -140,7 +147,7 @@ const server = createServer(async (incoming, outgoing) => {
     let data = await readFile(target);
     if (pwaQa && pathname === '/sw.js' && pwaRelease) data = Buffer.from(data.toString('utf8').replace(/nexo-public-([a-f0-9]{20})/, `nexo-public-$1-qa${pwaRelease}`));
     // Match production cache policy for PWA QA while keeping all documents private.
-    const publicStatic = pathname.startsWith('/assets/') || pathname.startsWith('/icons/') || ['/manifest.webmanifest', '/offline.html', '/favicon.svg'].includes(pathname);
+    const publicStatic = pathname.startsWith('/assets/') || pathname.startsWith('/icons/') || ['/manifest.webmanifest', '/offline', '/favicon.svg'].includes(pathname);
     outgoing.writeHead(200, { 'Content-Type': mime[extname(target)] || 'application/octet-stream', 'Cache-Control': publicStatic ? 'public, max-age=0' : pathname === '/sw.js' ? 'no-cache' : 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
     outgoing.end(incoming.method === 'HEAD' ? undefined : data);
   } catch (error) {

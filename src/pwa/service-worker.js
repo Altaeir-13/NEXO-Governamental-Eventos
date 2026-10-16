@@ -16,7 +16,7 @@ function acceptable(response, path) {
  if (/\.woff2?$/.test(path)) return /(?:font\/|application\/(?:font|octet-stream))/i.test(type);
  if (/\.(?:png|jpe?g|svg|webp|avif)$/.test(path)) return /image\//i.test(type);
  if (path === '/manifest.webmanifest') return /(?:manifest\+json|application\/json)/i.test(type);
- return path === '/offline.html' && /text\/html/i.test(type);
+ return path === '/offline' && /text\/html/i.test(type);
 }
 
 // Never skipWaiting or claim open tabs. The next release activates only once all
@@ -52,7 +52,7 @@ self.addEventListener('fetch', event => {
   // No HTML documents are persisted, including administrative/ticket routes.
   event.respondWith(fetch(request).catch(async () => {
    const cache = await caches.open(CACHE_NAME);
-   const fallback = await cache.match('/offline.html');
+   const fallback = await cache.match('/offline');
    return new Response(fallback ? await fallback.text() : 'Sem conexão. O credenciamento exige internet.', { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } });
   }));
   return;

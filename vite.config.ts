@@ -5,7 +5,10 @@ import react from '@vitejs/plugin-react';
 
 // Only these public files and Vite's immutable build assets may enter Cache Storage.
 // HTML, API responses, uploaded media, private links and query strings are excluded.
-const publicPwaFiles = ['/offline.html', '/manifest.webmanifest', '/favicon.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/icon-maskable-512.png', '/icons/apple-touch-icon.png'];
+// Cloudflare Pages redirects *.html to its canonical extensionless route.
+// Keep the logical cache URL separate from the physical file used for hashing.
+const publicPwaFiles = ['/offline', '/manifest.webmanifest', '/favicon.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/icon-maskable-512.png', '/icons/apple-touch-icon.png'];
+const publicPwaSource = (path: string) => path === '/offline' ? '/offline.html' : path;
 function publicAssetsWorker(): Plugin {
  return {
   name: 'nexo-public-assets-worker', apply: 'build',
@@ -14,7 +17,7 @@ function publicAssetsWorker(): Plugin {
    const hash = createHash('sha256');
    const template = readFileSync(new URL('./src/pwa/service-worker.js', import.meta.url), 'utf8');
    hash.update(template);
-   for (const path of publicPwaFiles) hash.update(path).update(readFileSync(new URL(`./public${path}`, import.meta.url)));
+   for (const path of publicPwaFiles) hash.update(path).update(readFileSync(new URL(`./public${publicPwaSource(path)}`, import.meta.url)));
    hash.update(JSON.stringify(assets));
    this.emitFile({ type: 'asset', fileName: 'sw.js', source: template.replace('__CACHE_VERSION__', hash.digest('hex').slice(0, 20)).replace('__PUBLIC_ASSETS__', JSON.stringify([...publicPwaFiles, ...assets])) });
   },

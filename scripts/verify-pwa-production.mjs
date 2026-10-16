@@ -11,13 +11,19 @@ async function get(path, status = 200, options) {
 }
 const home = await get('/');
 const html = await home.text();
-assert.match(html, /rel="manifest"/); assert.match(html, /apple-touch-icon/);
+assert(html.includes('rel="manifest"'), 'HTML ainda não contém o manifest do novo deployment');
+assert(html.includes('apple-touch-icon'), 'HTML não contém o ícone iOS');
 assert.match(home.headers.get('Permissions-Policy') || '', /camera=\(self\)/);
 await get('/admin');
 const manifest = await (await get('/manifest.webmanifest')).json();
 assert.equal(manifest.name, 'NEXO Governamental — Eventos');
 assert.equal(manifest.short_name, 'NEXO Eventos');
 assert.equal(manifest.display, 'standalone');
+const offline = await get('/offline', 200, { redirect: 'error' });
+assert.match(offline.headers.get('Content-Type') || '', /text\/html/);
+assert.match(await offline.text(), /Precisamos de uma conexão/);
+const offlineRedirect = await get('/offline.html', 308, { redirect: 'manual' });
+assert.equal(new URL(offlineRedirect.headers.get('Location'), base).href, `${base}/offline`, 'A URL HTML redireciona para a rota canônica usada no SW');
 for (const [path, dimension] of [['/icons/icon-192.png', 192], ['/icons/icon-512.png', 512], ['/icons/icon-maskable-512.png', 512], ['/icons/apple-touch-icon.png', 180]]) {
   const png = Buffer.from(await (await get(path)).arrayBuffer());
   assert.equal(png.readUInt32BE(16), dimension); assert.equal(png.readUInt32BE(20), dimension);
@@ -29,6 +35,9 @@ const script = await worker.text();
 // hashes those public source bytes; compare implementation and exact asset list.
 const normalizeWorker = value => value.replace(/\r\n/g, '\n').replace(/nexo-public-[a-f0-9]{20}/, 'nexo-public-VERSION');
 assert.equal(normalizeWorker(script), normalizeWorker(await readFile(new URL('../dist/sw.js', import.meta.url), 'utf8')), 'Worker e allowlist remotos correspondem ao build validado');
+const publicAssets = JSON.parse(script.match(/^const PUBLIC_ASSETS = new Set\((\[.*\])\);$/m)?.[1] || '[]');
+assert(publicAssets.includes('/offline') && !publicAssets.includes('/offline.html'), 'O SW precisa cachear a rota offline canônica');
+for (const path of publicAssets) await get(path, 200, { redirect: 'error' });
 for (const path of [...html.matchAll(/(?:src|href)="(\/assets\/[^"<>]+\.(?:js|css))"/g)].map(match => match[1])) await get(path);
 const session = await get('/api/admin/session', 401);
 assert.match(session.headers.get('Cache-Control') || '', /no-store/);

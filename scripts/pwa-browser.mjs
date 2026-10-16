@@ -126,7 +126,12 @@ async function injectCamera(context) {
 }
 
 async function verifyWorker(page, privateValues) {
- await page.evaluate(async () => { await navigator.serviceWorker.ready; });
+ const canonical = await page.request.get(`${origin}/offline`, { maxRedirects: 0 });
+ assert.equal(canonical.status(), 200);
+ const redirected = await page.request.get(`${origin}/offline.html`, { maxRedirects: 0 });
+ assert.equal(redirected.status(), 308);
+ assert.equal(redirected.headers().location, '/offline');
+ await bounded(page.evaluate(async () => { await navigator.serviceWorker.ready; }), 20000, 'Service worker readiness');
  await page.reload();
  await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller));
  const snapshot = await page.evaluate(async () => {
@@ -150,7 +155,7 @@ async function verifyWorker(page, privateValues) {
  for (const entry of snapshot.entries) {
   const url = new URL(entry.url);
   assert.equal(url.search, '');
-  assert(/^\/assets\/|^\/icons\/|^\/(offline\.html|manifest\.webmanifest|favicon\.svg)$/.test(url.pathname), 'Private/dynamic path entered public cache');
+  assert(/^\/assets\/|^\/icons\/|^\/(offline|manifest\.webmanifest|favicon\.svg)$/.test(url.pathname), 'Private/dynamic path entered public cache');
   for (const value of privateValues) assert(!entry.text.includes(value), 'Personal/credential value entered static cache');
  }
  return { cacheCount: snapshot.keys.length, assetCount: snapshot.entries.length };
@@ -164,12 +169,15 @@ async function runEngine(name) {
  const browser = await browserType.launch({ executablePath: await executable(name, browserType), headless: true, timeout: 20000 });
  browsers.push(browser);
  result.browserVersion = browser.version();
- const context = await bounded(browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, serviceWorkers: 'allow' }), 20000, `${name} context`);
+ const reducedMotion = process.env.NEXO_QA_REDUCED_MOTION === '1';
+ if (reducedMotion) result.notes.push('This run used prefers-reduced-motion; physical devices and default-motion touch behavior remain pending.');
+ const context = await bounded(browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, serviceWorkers: 'allow', reducedMotion: reducedMotion ? 'reduce' : 'no-preference' }), 20000, `${name} context`);
  await injectCamera(context);
  let page = await bounded(context.newPage(), 20000, `${name} page`);
  page.setDefaultTimeout(15000);
  const errors = [];
- page.on('pageerror', error => errors.push(error.name));
+ result.browserErrors = errors;
+ page.on('pageerror', error => errors.push({ name: error.name, at: new Date().toISOString(), route: page.url().replace(/[a-f0-9]{64}/g, '[redacted-token]'), afterScenario: result.passed.at(-1) || 'Initial navigation/login', message: String(error.message).replaceAll(credentials.password, '[redacted]').replace(/[a-f0-9]{64}/g, '[redacted-token]'), stack: String(error.stack || '').replaceAll(credentials.password, '[redacted]').replace(/[a-f0-9]{64}/g, '[redacted-token]').slice(0, 1800) }));
  const first = await seed(name, 'Manual');
  const second = await seed(name, 'Conexao');
  const cancelled = await seed(name, 'Cancelada');
@@ -180,6 +188,8 @@ async function runEngine(name) {
  await page.getByRole('button', { name: 'Entrar na plataforma' }).click();
  await navigateTab(page, 'Credenciamento');
  await page.getByRole('heading', { name: 'Recepção em números', exact: true }).waitFor();
+ await page.locator('.adm-reception-updated').waitFor({ state: 'visible' });
+ await page.waitForFunction(() => document.querySelector('.adm-sidebar').getBoundingClientRect().right <= 0);
  await noOverflow(page);
  pass('Synthetic admin login; Credenciamento mobile navigation; no horizontal overflow');
  await page.getByRole('button', { name: 'Iniciar leitura', exact: true }).click();
@@ -300,6 +310,8 @@ async function runEngine(name) {
  await page.goto(`${origin}/admin`, { waitUntil: 'networkidle' });
  await navigateTab(page, 'Credenciamento');
  await page.getByRole('heading', { name: 'Recepção em números', exact: true }).waitFor();
+ await page.locator('.adm-reception-updated').waitFor({ state: 'visible' });
+ await page.waitForFunction(() => document.querySelector('.adm-sidebar').getBoundingClientRect().right <= 0);
  await noOverflow(page);
  const screenshot = resolve(output, `${name}-credenciamento-390.png`);
  await page.screenshot({ path: screenshot, fullPage: true });
